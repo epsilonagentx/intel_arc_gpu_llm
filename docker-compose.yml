@@ -1,0 +1,162 @@
+# Pin the Compose project name so cache volumes stay `llm_*` regardless of the
+# folder this lives in (the repo dir is intel_arc_gpu_llm; without this the
+# volumes would be recreated as intel_arc_gpu_llm_* and re-download the weights).
+name: llm
+
+services:
+  vllm:
+    image: intel/vllm:0.17.0-xpu
+    container_name: vllm-xpu
+    restart: unless-stopped
+    # Pass only the Arc B60 render node (not the AMD iGPU).
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/card1:/dev/dri/card1
+    group_add:
+      - "992"   # host 'render' GID
+      - "44"    # host 'video' GID
+    ipc: host
+    shm_size: "16g"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - vllm-cache:/root/.cache/vllm
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      # Don't restrict ONEAPI_DEVICE_SELECTOR; torch.compile/Inductor needs to
+      # see all SYCL devices (CPU + GPU) to bring up its runtime.
+      ZES_ENABLE_SYSMAN: "1"
+      SYCL_CACHE_PERSISTENT: "1"
+      no_proxy: "localhost,127.0.0.1"
+    ports:
+      - "8000:8000"
+    working_dir: /workspace/vllm
+    # vLLM CLI serves an OpenAI-compatible API on /v1/*.
+    # gpt-oss-20b (MoE, ~13.7 GiB MXFP4 weights) on a 24 GB B60 (22.71 GiB usable).
+    # NOTE: gpu-memory-utilization sizes weights + the KV pool, but on this XPU
+    # build it does NOT cap torch.compile/Inductor kernel + workspace buffers,
+    # which grow as new request shapes get compiled. At 0.86 the card filled to
+    # 22.67/22.71 GiB (0.04 free) -> OOM-on-the-edge, instability and 504s. So
+    # 0.75 util (~17 GiB: ~13.7 weights + ~3.3 GiB KV pool) leaves ~2.5 GiB real
+    # headroom for that uncapped compile growth.
+    # max-model-len 65536 (64k): the model is natively 128k (YaRN,
+    # max_position_embeddings=131072), but 64k is ample for chat and keeps the
+    # reserved pool + activation buffers small. gpt-oss's alternating
+    # sliding-window(128) + full-attention layers halve per-request KV cost, so
+    # the ~3.3 GiB pool fits 64k with concurrency to spare. To go bigger later,
+    # raise max-model-len AND re-check real VRAM headroom -- do NOT just bump util.
+    # gpt-oss is reasoning-native (harmony format); the openai_gptoss parser
+    # exposes the analysis channel as message.reasoning for Open WebUI.
+    command: >
+      vllm serve openai/gpt-oss-20b
+        --host 0.0.0.0
+        --port 8000
+        --max-model-len 65536
+        --gpu-memory-utilization 0.75
+        --reasoning-parser openai_gptoss
+        --enable-auto-tool-choice
+        --tool-call-parser openai
+        --served-model-name gpt-oss-20b
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 60
+      start_period: 1800s   # first run downloads ~19 GB + loads model
+
+  # ===========================================================================
+  # A/B BENCHMARK ONLY -- Intel LLM-Scaler vLLM (Arc Pro B-series optimised fork)
+  # ===========================================================================
+  # Guarded behind the "scaler" profile so it NEVER starts on a bare
+  # `docker compose up` and never disturbs the running vllm-xpu service.
+  #
+  # !! ONE GPU (~22.7 GiB). gpt-oss-20b needs ~17 GiB, so this and the `vllm`
+  #    service CANNOT run at the same time (~31 GiB = OOM). Run them one at a
+  #    time. Swap procedure (LiteLLM-facing `vllm` goes down for the test):
+  #      docker compose stop vllm
+  #      docker compose --profile scaler up -d vllm-scaler
+  #      # first boot is the silent 10-15 min XPU cold start (no logs) -- wait
+  #      VLLM_ENDPOINT=http://localhost:8001 ./bench.sh 400
+  #      docker compose stop vllm-scaler && docker compose start vllm   # restore
+  # ---------------------------------------------------------------------------
+  vllm-scaler:
+    image: intel/llm-scaler-vllm:0.14.0-b8.3.1   # pin exact beta; docs say do NOT use :latest
+    container_name: vllm-scaler
+    profiles: ["scaler"]
+    restart: "no"            # test service -- don't auto-restart on crash
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/card1:/dev/dri/card1
+    group_add:
+      - "992"   # host 'render' GID
+      - "44"    # host 'video' GID
+    ipc: host
+    shm_size: "32g"          # llm-scaler docs recommend 32g
+    volumes:
+      - hf-cache:/root/.cache/huggingface      # reuse cached gpt-oss-20b weights -- NO re-download
+      - vllm-scaler-cache:/root/.cache/vllm    # SEPARATE compile cache (version-specific; don't collide with 0.17.0's)
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      ZES_ENABLE_SYSMAN: "1"
+      SYCL_CACHE_PERSISTENT: "1"
+      VLLM_WORKER_MULTIPROC_METHOD: "spawn"     # per llm-scaler docs
+      no_proxy: "localhost,127.0.0.1"
+    ports:
+      - "8001:8001"
+    # The llm-scaler image's default entrypoint drops to a shell, so invoke
+    # vllm serve explicitly via bash -lc (single-element list = one argv string).
+    #
+    # SAFE-BOOT config: --enforce-eager disables torch.compile, which (a) removes
+    # the uncapped Inductor/compile-buffer growth that forced 0.75 util on the
+    # other image -- so 0.85 util is safe here -- and (b) gives a clean first
+    # boot. BUT eager mode is SLOWER than compiled, so it UNDER-states scaler's
+    # real speed. Once it boots clean, drop --enforce-eager and re-bench for the
+    # true number (watch VRAM; back off util if it edges toward OOM).
+    #
+    # gpt-oss-20b is MXFP4 (pre-quantised) -- do NOT pass --quantization.
+    # The --reasoning-parser/--tool-call-parser flag names are inherited from
+    # upstream; if this fork renamed them the server fails fast at startup with
+    # a clear arg error -- adjust then.
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        vllm serve openai/gpt-oss-20b \
+          --host 0.0.0.0 \
+          --port 8001 \
+          --max-model-len 65536 \
+          --gpu-memory-utilization 0.85 \
+          --enforce-eager \
+          --reasoning-parser openai_gptoss \
+          --enable-auto-tool-choice \
+          --tool-call-parser openai \
+          --served-model-name gpt-oss-20b
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8001 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 60
+      start_period: 1800s
+
+#  open-webui:
+#    image: ghcr.io/open-webui/open-webui:main
+#    container_name: open-webui
+#    restart: unless-stopped
+#    depends_on:
+#      vllm:
+#        condition: service_healthy
+#    environment:
+#      # Point Open WebUI at vLLM's OpenAI-compatible endpoint.
+#      OPENAI_API_BASE_URL: "http://vllm:8000/v1"
+#      OPENAI_API_KEY: "EMPTY"           # vLLM doesn't require auth by default
+#      ENABLE_OLLAMA_API: "false"
+#      WEBUI_AUTH: "false"
+#      ENABLE_SIGNUP: "false"
+#    volumes:
+#      - open-webui-data:/app/backend/data
+#    ports:
+#      - "3000:8080"
+
+volumes:
+  hf-cache:
+#  open-webui-data:
+  vllm-cache:
+  vllm-scaler-cache:   # compile cache for the llm-scaler A/B service
