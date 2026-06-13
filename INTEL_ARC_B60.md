@@ -1,4 +1,4 @@
-# Local LLM stack — work wiki
+# Intel Arc B60 LLM stack — work hub
 
 The hub for the Arc B60 LLM stack: what's running, what's pending, and where the
 real docs live. This page is the **living state**; the stable how/why lives in

@@ -1,7 +1,7 @@
 # Local LLM stack — developer notes (the *why*)
 
 Why the config in `docker-compose.yml` is the way it is. For how to *operate* the
-stack see [README.md](README.md); for current state see [WORKWIKI.md](WORKWIKI.md).
+stack see [README.md](README.md); for current state see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)** with
 `intel/vllm:0.17.0-xpu`. They are not portable to other cards or images without
@@ -50,7 +50,7 @@ Known-good empirical values on the B60:
 | Qwen3-32B-AWQ | 18.14 GiB | **7168** | 12k and 10k both failed the pre-check |
 
 *Weights here are the loaded figure vLLM reports at startup (GiB); the ≈GB
-on-disk cache sizes in README/WORKWIKI are the same weights in GB units
+on-disk cache sizes in README/INTEL_ARC_B60 are the same weights in GB units
 (18.14 GiB ≈ 19 GB).*
 
 **To go bigger later:** raise `--max-model-len` AND re-measure real VRAM

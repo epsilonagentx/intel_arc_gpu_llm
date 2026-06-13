@@ -4,7 +4,7 @@ Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). Container:
 `intel/vllm:0.17.0-xpu`. This is the **how-to** for running and operating the
 stack. The *why* behind the config (VRAM sizing, the 0.75-util decision,
 quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); current state and open
-threads are in [WORKWIKI.md](WORKWIKI.md).
+threads are in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 The stack is a single vLLM service (port 8000, LAN-exposed) serving
 `gpt-oss-20b`. Open WebUI is **commented out** in `docker-compose.yml` but can be
@@ -167,7 +167,7 @@ Per-family behaviour:
 
 - Port 8000 (vLLM): exposed to the LAN subnet via
   `sudo ufw allow from 192.168.x.0/24 to any port 8000 proto tcp`.
-  *(Whether this rule is actually live is unconfirmed — see WORKWIKI.md.)*
+  *(Whether this rule is actually live is unconfirmed — see INTEL_ARC_B60.md.)*
 - Port 3000 (Open WebUI): localhost only by choice — no UFW rule.
 
 ---
