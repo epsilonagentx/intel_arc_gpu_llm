@@ -7,7 +7,7 @@ the two role docs:
 - **[README.md](README.md)** — devops / operator: how to run, swap, monitor, troubleshoot.
 - **[DEVELOPER.md](DEVELOPER.md)** — developer: why the config is what it is.
 
-> This repo lives at `/home/epsilonagentx/github_projects/intel_arc_gpu_llm`
+> This repo lives at `/home/<user>/github_projects/intel_arc_gpu_llm`
 > (GitHub remote: `epsilonagentx/intel_arc_gpu_llm`). The Compose project name is
 > pinned to `llm` (`name: llm` in `docker-compose.yml`), so the cache volumes
 > stay `llm_*` regardless of the folder name.

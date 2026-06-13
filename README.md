@@ -1,6 +1,7 @@
 # Local LLM stack — operator guide (devops)
 
-Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). Container:
+Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). Host: any modern Linux
+(needs Docker and the Intel `xe` GPU driver). Container:
 `intel/vllm:0.17.0-xpu`. This is the **how-to** for running and operating the
 stack. The *why* behind the config (VRAM sizing, the 0.75-util decision,
 quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); current state and open
