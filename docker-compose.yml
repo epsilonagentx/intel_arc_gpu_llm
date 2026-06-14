@@ -45,7 +45,7 @@ services:
     # the ~3.3 GiB pool fits 64k with concurrency to spare. To go bigger later,
     # raise max-model-len AND re-check real VRAM headroom -- do NOT just bump util.
     # gpt-oss is reasoning-native (harmony format); the openai_gptoss parser
-    # exposes the analysis channel as message.reasoning for Open WebUI.
+    # exposes the analysis channel as message.reasoning for clients like Open WebUI.
     command: >
       vllm serve openai/gpt-oss-20b
         --host 0.0.0.0
@@ -61,7 +61,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 60
-      start_period: 1800s   # first run downloads ~19 GB + loads model
+      start_period: 1800s   # first run downloads ~13 GB + loads model
 
   # ===========================================================================
   # A/B BENCHMARK ONLY -- Intel LLM-Scaler vLLM (Arc Pro B-series optimised fork)
@@ -71,7 +71,8 @@ services:
   #
   # !! ONE GPU (~22.7 GiB). gpt-oss-20b needs ~17 GiB, so this and the `vllm`
   #    service CANNOT run at the same time (~31 GiB = OOM). Run them one at a
-  #    time. Swap procedure (LiteLLM-facing `vllm` goes down for the test):
+  #    time. Swap procedure (the production `vllm` goes down for the test, so any
+  #    gateway/UI fronting it is offline meanwhile):
   #      docker compose stop vllm
   #      docker compose --profile scaler up -d vllm-scaler
   #      # first boot is the silent 10-15 min XPU cold start (no logs) -- wait

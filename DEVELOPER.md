@@ -1,7 +1,7 @@
 # Local LLM stack — developer notes (the *why*)
 
 Why the config in `docker-compose.yml` is the way it is. For how to *operate* the
-stack see [README.md](README.md); for current state see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
+stack see [README.md](README.md); for a configuration overview see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)** with
 `intel/vllm:0.17.0-xpu`. They are not portable to other cards or images without
@@ -46,7 +46,7 @@ Known-good empirical values on the B60:
 
 | Model | Weights (loaded) | Working `--max-model-len` | Notes |
 |-------|------------------|----------------------------|-------|
-| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; current production value |
+| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; the value shipped in `docker-compose.yml` |
 | Qwen3-32B-AWQ | 18.14 GiB | **7168** | 12k and 10k both failed the pre-check |
 
 *Weights here are the loaded figure vLLM reports at startup (GiB); the ≈GB
@@ -104,9 +104,8 @@ decode baseline on stock is **~60 tok/s** on the B60 (measured single-stream via
 never starts on a bare `docker compose up` and never disturbs the running
 service. The operator run procedure is in the README.
 
-**Status:** image `intel/llm-scaler-vllm:0.14.0-b8.3.1` is pulled (pinned beta —
-docs say do **not** use `:latest`), but the test has **not been run** yet (no
-`vllm-scaler-cache` volume exists).
+**Image:** use the pinned beta tag `intel/llm-scaler-vllm:0.14.0-b8.3.1` — the
+fork's docs warn against `:latest`.
 
 **`--enforce-eager` caveat:** the staged config boots with `--enforce-eager`,
 which (a) disables torch.compile — removing the uncapped Inductor buffer growth
@@ -117,3 +116,20 @@ under-states the scaler's real speed. Once it boots clean, drop
 it edges toward OOM). gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass
 `--quantization`. The fork inherits upstream's parser flag names; if it renamed
 them the server fails fast at startup with a clear arg error.
+
+---
+
+## Hardware & model rationale
+
+Context for future hardware or model swaps:
+
+- **B70 vs B60** — the Arc Pro B70 (32 GB) gives roughly 1.3× decode / 1.85×
+  prefill plus context headroom over the B60, but does **not** unlock Gemma 4
+  (that's software-gated, not a VRAM limit).
+- **Multi-GPU** — on a consumer board a second card typically only gets a
+  chipset x4 link, so don't tensor-/pipeline-parallel across cards; run each card
+  as an independent engine instead.
+- **Model freshness** — gpt-oss-20b's knowledge cutoff is mid-2024. Fresher fast
+  MoEs (e.g. Qwen3.5/3.6-35B-A3B AWQ ≈ 24 GB) don't fit the B60's ~22.7 GiB
+  usable, so freshness is better addressed with RAG than with a model swap on
+  this card.
