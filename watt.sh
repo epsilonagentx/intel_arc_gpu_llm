@@ -4,12 +4,12 @@
 #
 #   ./watt.sh            # sample every 1s
 #   ./watt.sh 2          # sample every 2s
-#   PCI=0000:03:00.0 ./watt.sh   # override the card (default is the B60)
+#   PCI=0000:03:00.0 ./watt.sh   # example BDF; find yours: lspci | grep -i display
 #
 # Ctrl-C prints min/avg/max for the run (handy alongside bench.sh).
 set -euo pipefail
 
-PCI=${PCI:-0000:03:00.0}      # Arc Pro B60
+PCI=${PCI:-0000:03:00.0}      # example default; override via PCI= (find: lspci | grep -i display)
 interval=${1:-1}              # seconds between samples
 
 # The xe hwmon node has no instantaneous power reading — only cumulative energy

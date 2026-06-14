@@ -4,8 +4,8 @@ Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). Host: any modern Linux
 (needs Docker and the Intel `xe` GPU driver). Container:
 `intel/vllm:0.17.0-xpu`. This is the **how-to** for running and operating the
 stack. The *why* behind the config (VRAM sizing, the 0.75-util decision,
-quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); current state and open
-threads are in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
+quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); a configuration
+overview is in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 The stack is a single vLLM service (port 8000, LAN-exposed) serving
 `gpt-oss-20b`. Open WebUI is **commented out** in `docker-compose.yml` but can be
@@ -43,7 +43,7 @@ Four knobs in `docker-compose.yml` under `services.vllm.command`:
 | Flag | What to change |
 |------|----------------|
 | `vllm serve <REPO_ID>` | Hugging Face repo ID (e.g. `openai/gpt-oss-20b`) |
-| `--served-model-name <ID>` | Name clients call it by; what LiteLLM's `model:` maps to |
+| `--served-model-name <ID>` | Name clients call it by; what a downstream gateway's model mapping points to |
 | `--reasoning-parser <NAME>` | Model-family specific. Wrong parser = empty reasoning field, **not** a crash |
 | `--max-model-len <N>` | Context window — must fit VRAM after weights + compile buffers (see DEVELOPER.md) |
 
@@ -65,7 +65,7 @@ just stops it from being completely cold.
 downloads weights into `hf-cache`. Plan for ~10–30 min download + the silent
 10–15 min XPU cold start + ~30–60 s first-request compile.
 
-### Cached models (last known) and their parsers
+### Cached models and their parsers
 
 | HF repo | On-disk size | `--reasoning-parser` | Reasoning |
 |---------|--------------|----------------------|-----------|
@@ -119,16 +119,16 @@ sysfs (no root, no packages):
 ```bash
 ./watt.sh            # 1s samples
 ./watt.sh 2          # 2s samples
-PCI=0000:03:00.0 ./watt.sh   # override the card (default is the B60)
+PCI=0000:03:00.0 ./watt.sh   # example BDF — find yours: lspci | grep -i display
 ```
 
 Ctrl-C prints min/avg/max for the run — handy running alongside `bench.sh`. The
 `xe` driver exposes only cumulative energy (µJ), so the script derives watts from
 the delta between samples.
 
-**Live utilisation/VRAM — `nvtop`** (v3.0.2) is the working TUI monitor for the
-`xe` B60. `intel_gpu_top` does **not** work here (it's i915-only); `xpu-smi` is
-not installed.
+**Live utilisation/VRAM — `nvtop`** (v3.0.x or newer) is the working TUI monitor
+for the `xe` B60. `intel_gpu_top` does **not** work here (it's i915-only);
+Intel's `xpu-smi` is an alternative if you install it.
 
 ---
 
@@ -151,25 +151,40 @@ Per-family behaviour:
 
 ---
 
-## Downstream consumers
+## Clients
 
-- **LiteLLM** proxy on `192.168.x.x:4000` fronts this vLLM instance. When you
-  swap models here, update LiteLLM's `model:` to match `--served-model-name`;
-  `api_base` is unchanged as long as this host's LAN IP and port 8000 don't
-  change. LiteLLM has **no tool executor** — tool-call requests won't run
-  through that path.
-- **Bifrost** gateway on `192.168.x.x:4010` fronts gpt-oss-20b for coding CLIs
-  and **does** use the tool-calling path (which is why `--enable-auto-tool-choice
-  --tool-call-parser openai` are set on vLLM).
+The endpoint is OpenAI-compatible, so any OpenAI-style client works. A consumer is
+usually one of two kinds — an AI gateway in front of it, or a containerized
+tool/UI that talks to it directly:
+
+- **AI gateways / proxies** (e.g. LiteLLM, Bifrost — any gateway works) — front
+  the endpoint to add routing, key management, or multiple backends. Point them at
+  `http://<host>:8000/v1` using the `--served-model-name`; `api_key` can be any
+  value (vLLM needs no auth). When swapping the model, update the gateway's model
+  mapping to match `--served-model-name`. A plain proxy has **no tool executor** —
+  to use tool-calling, route through the gateway's tool-call path
+  (`--enable-auto-tool-choice --tool-call-parser openai` are already set on vLLM
+  for this).
+- **Any containerized tool / UI** that speaks the OpenAI API — for example
+  **Open WebUI**, a self-hosted chat UI bundled (commented out) in
+  `docker-compose.yml`; enable it per *Re-enabling Open WebUI* below. (Open WebUI
+  renders `message.reasoning` as a collapsible panel.)
 
 ---
 
-## Firewall (UFW)
+## Firewall (recommended)
 
-- Port 8000 (vLLM): exposed to the LAN subnet via
-  `sudo ufw allow from 192.168.x.0/24 to any port 8000 proto tcp`.
-  *(Whether this rule is actually live is unconfirmed — see INTEL_ARC_B60.md.)*
-- Port 3000 (Open WebUI): localhost only by choice — no UFW rule.
+The vLLM endpoint has **no authentication**, so don't expose port 8000 to
+untrusted networks. Restrict it with a host firewall — UFW is shown here, but any
+firewall (firewalld, nftables, iptables) does the same job:
+
+- **Port 8000 (vLLM):** allow only your LAN subnet — or bind it to localhost if
+  you only consume it on the host. With UFW, for example:
+  `sudo ufw allow from 192.168.x.0/24 to any port 8000 proto tcp`
+- **Port 3000 (Open WebUI), if you enable it:** the bundled mapping is
+  `3000:8080`, which binds **all** interfaces — so either change it to
+  `127.0.0.1:3000:8080` to keep the auth-disabled UI on localhost, or firewall it
+  to your LAN subnet the same way as port 8000.
 
 ---
 
@@ -181,7 +196,7 @@ Host path: `/var/lib/docker/volumes/llm_<name>/_data`
 |--------|----------|-------|
 | `hf-cache` | HF model weights | Survives compose changes |
 | `vllm-cache` | torch.compile + AOT artifacts | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
-| `open-webui-data` | WebUI users / chats / settings | Preserved even with the service commented out |
+| `open-webui-data` | WebUI users / chats / settings | Created once Open WebUI is enabled and run; then persists across restarts (even if the service is commented back out) |
 | `vllm-scaler-cache` | A/B service compile cache | Only created when the `scaler` profile first boots |
 
 ---
@@ -191,8 +206,9 @@ Host path: `/var/lib/docker/volumes/llm_<name>/_data`
 Uncomment the `open-webui` service **and** the `open-webui-data` volume in
 `docker-compose.yml`, then `docker compose up -d open-webui`. It points at
 `http://vllm:8000/v1`, runs on `http://localhost:3000` with auth disabled, and
-restores prior chats from the preserved volume. It renders `message.reasoning`
-as a collapsible panel out of the box.
+persists chats/users/settings in the `open-webui-data` volume (so they survive
+restarts, and even commenting the service back out). It renders
+`message.reasoning` as a collapsible panel out of the box.
 
 ---
 
