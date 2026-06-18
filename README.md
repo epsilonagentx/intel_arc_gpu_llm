@@ -44,7 +44,9 @@ explicit `docker compose stop vllm` is what keeps it down.
 
 ## Swapping the served model
 
-Four knobs in `docker-compose.yml` under `services.vllm.command`:
+A swap is two steps — edit the launch command, then force-recreate.
+
+**Step 1 — edit `services.vllm.command` in `docker-compose.yml`.** Change the model-specific knobs:
 
 | Flag | What to change |
 |------|----------------|
@@ -53,7 +55,7 @@ Four knobs in `docker-compose.yml` under `services.vllm.command`:
 | `--reasoning-parser <NAME>` | Model-family specific. Wrong parser = empty reasoning field, **not** a crash |
 | `--max-model-len <N>` | Context window — must fit VRAM after weights + compile buffers (see DEVELOPER.md) |
 
-Then recreate the container:
+**Step 2 — recreate the container:**
 
 ```bash
 docker compose up -d --force-recreate vllm
@@ -82,6 +84,46 @@ Sizes above are on-disk cache footprint; loaded-weight (GiB) figures and context
 caps live in [DEVELOPER.md](DEVELOPER.md)'s sizing table. Swapping back to Qwen
 also means lowering `--max-model-len` (7168 was the empirical cap for 32B-AWQ on
 the B60) — details in DEVELOPER.md.
+
+### Worked example: gpt-oss-20b ↔ Qwen3-32B-AWQ
+
+The shipped `command:` serves gpt-oss-20b:
+
+```yaml
+    command: >
+      vllm serve openai/gpt-oss-20b
+        --host 0.0.0.0
+        --port 8000
+        --max-model-len 65536
+        --gpu-memory-utilization 0.75
+        --reasoning-parser openai_gptoss
+        --enable-auto-tool-choice
+        --tool-call-parser openai
+        --served-model-name gpt-oss-20b
+```
+
+To serve **Qwen3-32B-AWQ** instead, edit that block to:
+
+```yaml
+    command: >
+      vllm serve Qwen/Qwen3-32B-AWQ
+        --host 0.0.0.0
+        --port 8000
+        --max-model-len 7168
+        --reasoning-parser qwen3
+        --enable-auto-tool-choice
+        --tool-call-parser hermes
+        --served-model-name qwen3-32b
+```
+
+…then `docker compose up -d --force-recreate vllm`. What changed and why:
+
+- **Repo + served name** → `Qwen/Qwen3-32B-AWQ`, called `qwen3-32b` by clients (update any gateway's model mapping to match).
+- **`--max-model-len` 65536 → 7168** — the empirical B60 cap for this model; 10k and 12k both fail vLLM's KV pre-check at startup.
+- **`--reasoning-parser` → `qwen3`** — Qwen3 is hybrid-thinking (`/no_think` in the prompt turns it off); the `openai_gptoss` parser would leave the reasoning field empty.
+- **`--tool-call-parser` → `hermes`** — Qwen3 emits Hermes-style tool calls, not gpt-oss's `openai` format. (The image also ships `qwen3_xml` and `qwen3_coder`; the latter is only for Qwen3-**Coder**.) Drop both tool flags if you don't need tool-calling.
+- **Dropped `--gpu-memory-utilization 0.75`** — Qwen3-32B-AWQ's weights are ~18 GiB, which won't fit the ~17 GiB that 0.75 reserves, so it falls back to vLLM's 0.9 default. It's a tight fit on 22.7 GiB (the reason `--max-model-len` is only 7168) — watch real VRAM and size it empirically per [DEVELOPER.md](DEVELOPER.md).
+- **AWQ, not FP8** — the official `Qwen/*-FP8` weights hit an XPU bug on this image; AWQ is the working path.
 
 ---
 
