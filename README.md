@@ -1,6 +1,8 @@
 # Local LLM stack — operator guide (devops)
 
 > ⚠️ The only official source is [github.com/epsilonagentx/intel_arc_gpu_llm](https://github.com/epsilonagentx/intel_arc_gpu_llm); copies elsewhere are not maintained by me.
+>
+> 💡 Using it? **Fork** the repo (don't just download a copy) and work on your own branch — that keeps you linked to upstream for updates and makes contributing back easy. See [how to fork a repo](https://docs.github.com/en/get-started/quickstart/fork-a-repo), or [fork this one directly](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork).
 
 Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). Host: any modern Linux
 (needs Docker and the Intel `xe` GPU driver). Container:
