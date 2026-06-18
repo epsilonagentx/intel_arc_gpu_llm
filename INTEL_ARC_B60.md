@@ -47,6 +47,7 @@ tool/UI that talks to it directly:
   routing, key management, or multiple backends (`api_key` can be any value;
   vLLM needs no auth).
 - **Any containerized tool / UI** that speaks the OpenAI API — such as Open
-  WebUI, a self-hosted chat UI included (commented out) in `docker-compose.yml`.
+  WebUI, a self-hosted chat UI provided as an optional separate Compose file
+  (`docker-compose.openwebui.yml`).
 
-See the README's *Clients* and *Re-enabling Open WebUI* sections for details.
+See the README's *Clients* and *Running Open WebUI* sections for details.
