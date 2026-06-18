@@ -261,6 +261,13 @@ Open WebUI is an optional, self-hosted chat UI kept in its **own** Compose file
 inference engine. It's just one example of an OpenAI-compatible client — swap in
 any UI you prefer.
 
+> ⚠️ **Local testing only — not production-hardened.** This config runs with auth
+> off (`WEBUI_AUTH=false`), open CORS (Open WebUI defaults `CORS_ALLOW_ORIGIN` to
+> `*` and logs `WARNING: CORS_ALLOW_ORIGIN IS SET TO '*' - NOT RECOMMENDED FOR
+> PRODUCTION DEPLOYMENTS`), and binds `:3000` on all interfaces. Before any real or
+> shared use: set `WEBUI_AUTH=true`, pin `CORS_ALLOW_ORIGIN` to your actual origin,
+> and keep the port off untrusted networks (see *Firewall*).
+
 ```bash
 docker compose -f docker-compose.openwebui.yml up -d      # start the UI
 docker compose -f docker-compose.openwebui.yml logs -f    # follow

@@ -5,6 +5,12 @@
 # the stack. Open WebUI is just ONE example of an OpenAI-compatible chat UI —
 # swap in any client you prefer.
 #
+# !! LOCAL TESTING ONLY — NOT production-hardened. Auth is off (WEBUI_AUTH=false),
+#    CORS is open (Open WebUI defaults CORS_ALLOW_ORIGIN to '*' and logs a warning
+#    about it), and :3000 binds all interfaces. Before any real/shared use: set
+#    WEBUI_AUTH=true, pin CORS_ALLOW_ORIGIN to your origin, and firewall or
+#    localhost-bind the port.
+#
 #   Start (vLLM must already be up — see docker-compose.yml):
 #     docker compose -f docker-compose.openwebui.yml up -d
 #   Open:  http://localhost:3000     (auth disabled by default)
