@@ -137,27 +137,12 @@ services:
       retries: 60
       start_period: 1800s
 
-#  open-webui:
-#    image: ghcr.io/open-webui/open-webui:main
-#    container_name: open-webui
-#    restart: unless-stopped
-#    depends_on:
-#      vllm:
-#        condition: service_healthy
-#    environment:
-#      # Point Open WebUI at vLLM's OpenAI-compatible endpoint.
-#      OPENAI_API_BASE_URL: "http://vllm:8000/v1"
-#      OPENAI_API_KEY: "EMPTY"           # vLLM doesn't require auth by default
-#      ENABLE_OLLAMA_API: "false"
-#      WEBUI_AUTH: "false"
-#      ENABLE_SIGNUP: "false"
-#    volumes:
-#      - open-webui-data:/app/backend/data
-#    ports:
-#      - "3000:8080"
+# Open WebUI (optional chat UI) is intentionally NOT defined here. It runs as
+# its own Compose project so it can be deployed and updated independently of the
+# inference engine. See docker-compose.openwebui.yml and the README's
+# "Running Open WebUI (optional)" section.
 
 volumes:
   hf-cache:
-#  open-webui-data:
   vllm-cache:
   vllm-scaler-cache:   # compile cache for the llm-scaler A/B service

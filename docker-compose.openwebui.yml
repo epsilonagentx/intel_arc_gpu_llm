@@ -1,0 +1,53 @@
+# Optional chat UI — Open WebUI — deployed as its OWN Compose project.
+#
+# Kept separate from docker-compose.yml (the vLLM inference engine) on purpose,
+# so the UI can be deployed/updated independently and is never required to run
+# the stack. Open WebUI is just ONE example of an OpenAI-compatible chat UI —
+# swap in any client you prefer.
+#
+#   Start (vLLM must already be up — see docker-compose.yml):
+#     docker compose -f docker-compose.openwebui.yml up -d
+#   Open:  http://localhost:3000     (auth disabled by default)
+#   Logs:  docker compose -f docker-compose.openwebui.yml logs -f
+#   Stop:  docker compose -f docker-compose.openwebui.yml down
+#
+# CONNECTIVITY: this is a separate Compose project, so it lives on its own
+# Docker network and CANNOT reach vLLM by service name (http://vllm:8000). It
+# instead talks to vLLM through the HOST's published port:
+#   - Same host (default): host.docker.internal -> host gateway (Linux), so the
+#     URL below hits the vllm container's published :8000.
+#   - Different host: set OPENAI_API_BASE_URL to http://<vllm-host>:8000/v1.
+#   - A/B scaler: use :8001 while the `vllm-scaler` profile is up (only one of
+#     vllm / vllm-scaler runs at a time on the single GPU).
+#
+# Its own project name keeps the data volume predictable
+# (open-webui_open-webui-data) instead of taking the checkout-folder name.
+name: open-webui
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    # A separate project = a separate network, so the vLLM service name does not
+    # resolve here. host-gateway maps host.docker.internal to the host's gateway
+    # IP (Docker Engine 20.10+ on Linux), letting us reach vLLM's published port.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # vLLM's OpenAI-compatible endpoint, via the host's published :8000.
+      # Remote vLLM host -> http://<vllm-host>:8000/v1 ; scaler -> :8001.
+      OPENAI_API_BASE_URL: "http://host.docker.internal:8000/v1"
+      OPENAI_API_KEY: "EMPTY"           # vLLM doesn't require auth by default
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_AUTH: "false"
+      ENABLE_SIGNUP: "false"
+    volumes:
+      - open-webui-data:/app/backend/data
+    ports:
+      # Binds ALL interfaces. The UI has auth disabled — keep it off untrusted
+      # networks: use "127.0.0.1:3000:8080" for localhost-only, or firewall it.
+      - "3000:8080"
+
+volumes:
+  open-webui-data:
