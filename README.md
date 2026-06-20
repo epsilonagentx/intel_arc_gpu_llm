@@ -4,9 +4,11 @@
 >
 > 💡 Using it? **Fork** the repo (don't just download a copy) and work on your own branch — that keeps you linked to upstream for updates and makes contributing back easy. See [how to fork a repo](https://docs.github.com/en/get-started/quickstart/fork-a-repo), or [fork this one directly](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork).
 
-Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). Host: any modern Linux
-(needs Docker and the Intel `xe` GPU driver). Container:
-`intel/vllm:0.17.0-xpu`. This is the **how-to** for running and operating the
+Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). **Host OS: Linux only** —
+any modern distribution with Docker and the Intel `xe` GPU driver. Windows and
+macOS are not supported: the `xe` kernel driver and the sysfs/hwmon helper
+scripts (`watt.sh`, the troubleshooting `/proc` reads) are Linux-specific.
+Container: `intel/vllm:0.17.0-xpu`. This is the **how-to** for running and operating the
 stack. The *why* behind the config (VRAM sizing, the 0.75-util decision,
 quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); a configuration
 overview is in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
