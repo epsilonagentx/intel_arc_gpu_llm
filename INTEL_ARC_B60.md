@@ -18,6 +18,7 @@ Source of truth is `docker-compose.yml`; this table is a snapshot for quick orie
 
 | | |
 |---|---|
+| Host OS | **Linux only** (Intel `xe` GPU driver + Docker; no Windows/macOS) |
 | Service | `vllm` (container `vllm-xpu`) |
 | Image | `intel/vllm:0.17.0-xpu` |
 | Model | `openai/gpt-oss-20b`, served as **`gpt-oss-20b`** |
