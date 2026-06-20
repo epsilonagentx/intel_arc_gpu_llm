@@ -5,7 +5,8 @@ stack see [README.md](README.md); for a configuration overview see [INTEL_ARC_B6
 
 All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)** with
 `intel/vllm:0.17.0-xpu`. They are not portable to other cards or images without
-re-checking.
+re-checking. The host is **Linux only** — the Intel `xe` GPU driver is
+Linux-specific, so Windows and macOS are out of scope.
 
 ---
 
