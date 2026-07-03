@@ -8,7 +8,7 @@ Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). **Host OS: Linux only** �
 any modern distribution with Docker and the Intel `xe` GPU driver. Windows and
 macOS are not supported: the `xe` kernel driver and the sysfs/hwmon helper
 scripts (`watt.sh`, the troubleshooting `/proc` reads) are Linux-specific.
-Container: `intel/vllm:0.17.0-xpu`. This is the **how-to** for running and operating the
+Container: `intel/vllm:0.21.0-ubuntu24.04`. This is the **how-to** for running and operating the
 stack. The *why* behind the config (VRAM sizing, the 0.75-util decision,
 quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); a configuration
 overview is in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
@@ -45,6 +45,28 @@ explicit `docker compose stop vllm` is what keeps it down.
 > start, no logs). See *Troubleshooting* below to confirm it's working, not
 > stuck. After the first run, `SYCL_CACHE_PERSISTENT=1` + the `vllm-cache`
 > volume cut restarts to ~30 s.
+
+---
+
+## Upgrading the vLLM image
+
+The stack is pinned to `intel/vllm:0.21.0-ubuntu24.04`. Two things differ from the
+earlier `0.17.0-xpu` — both already baked into `docker-compose.yml`, but they bite
+if you bump the image yourself:
+
+- **Device passthrough.** 0.21.0 needs the **whole `/dev/dri`** plus a
+  `/dev/dri/by-path:ro` bind-mount. oneCCL enumerates the GPU through `by-path`
+  during warm-up, and Docker's `devices:` never recreates that symlink dir — miss
+  it and the container dies at boot (`oneCCL: ze_fd_manager … opendir failed`).
+  `0.17.0-xpu` booted with just the `renderD128`/`card1` nodes.
+- **Compile cache.** torch.compile kernels are image-version-specific, so clear the
+  old cache once on upgrade:
+  ```bash
+  docker compose down
+  docker volume rm llm_vllm-cache
+  docker compose up -d vllm
+  ```
+  The first request then runs the usual ~30–60 s compile and the cache repopulates.
 
 ---
 
@@ -165,6 +187,26 @@ throughput under concurrent load is much higher; this bench is one-user only.
 
 ---
 
+## Smoke test — `smoke.sh`
+
+A fast end-to-end **correctness** check of the running service (where `bench.sh`
+measures *speed*): confirms the model is served, plain chat generates content, the
+reasoning trace comes through (`message.reasoning`), and tool-calling emits a
+`tool_call`. Handy right after a (re)start, a model swap, or an image upgrade.
+
+```bash
+./smoke.sh                                          # localhost:8000, model gpt-oss-20b
+MODEL=qwen3-32b ./smoke.sh                          # after a model swap
+VLLM_ENDPOINT=http://192.168.x.x:8000 ./smoke.sh    # remote target
+```
+
+- **`MODEL=`** must match `--served-model-name` (default `gpt-oss-20b`).
+- **`VLLM_ENDPOINT=`** overrides the endpoint (default `http://localhost:8000`).
+- Exits non-zero if any check fails, so it drops into scripts/CI. The tool-calling
+  check assumes the served model supports tools (gpt-oss and Qwen3 both do).
+
+---
+
 ## Power & live monitoring
 
 **Power — `watt.sh`** reads the B60's `xe` hwmon energy counters straight from
@@ -190,9 +232,9 @@ Intel's `xpu-smi` is an alternative if you install it.
 
 vLLM emits the reasoning trace into **`message.reasoning`** (and
 `delta.reasoning` in streams), **not** `reasoning_content` as some vLLM docs
-suggest. The `intel/vllm:0.17.0-xpu` build uses the shorter name. Any consumer
-parsing for `reasoning_content` sees empty strings while thinking tokens are
-silently consumed.
+suggest — verified on both the older `intel/vllm:0.17.0-xpu` and the current
+`intel/vllm:0.21.0-ubuntu24.04`. Any consumer parsing for `reasoning_content`
+sees empty strings while thinking tokens are silently consumed.
 
 Per-family behaviour:
 
