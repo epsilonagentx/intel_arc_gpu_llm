@@ -5,20 +5,29 @@ name: llm
 
 services:
   vllm:
-    image: intel/vllm:0.17.0-xpu
+    image: intel/vllm:0.21.0-ubuntu24.04
     container_name: vllm-xpu
     restart: unless-stopped
-    # Pass only the Arc B60 render node (not the AMD iGPU).
+    # 0.21.0 needs the WHOLE /dev/dri (plus the by-path bind-mount under volumes:).
+    # oneCCL's ze_fd_manager opendir()s /dev/dri/by-path during the world_size=1
+    # warm-up all_reduce, and Docker's `devices:` never recreates that symlink dir
+    # -> without it boot dies ("oneCCL: ze_fd_manager.cpp:144 ... opendir failed").
+    # The AMD iGPU nodes this also exposes are harmless (not SYCL XPUs). NOTE:
+    # 0.17.0-xpu did NOT need this — it booted with only renderD128 + card1.
     devices:
-      - /dev/dri/renderD128:/dev/dri/renderD128
-      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri:/dev/dri
     group_add:
       - "992"   # host 'render' GID
       - "44"    # host 'video' GID
     ipc: host
     shm_size: "16g"
     volumes:
+      - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration (see devices: above)
       - hf-cache:/root/.cache/huggingface
+      # Compiled kernels are image-version-specific. When upgrading the image,
+      # clear this cache ONCE (`docker compose down` then
+      # `docker volume rm llm_vllm-cache`) so the new image compiles fresh — that
+      # is the validated path. Steady state it self-fills and speeds restarts.
       - vllm-cache:/root/.cache/vllm
     environment:
       HF_HOME: /root/.cache/huggingface
@@ -29,7 +38,8 @@ services:
       no_proxy: "localhost,127.0.0.1"
     ports:
       - "8000:8000"
-    working_dir: /workspace/vllm
+    # (No working_dir: 0.17.0-xpu had /workspace/vllm, but 0.21.0-ubuntu24.04 does
+    # not ship it, and `vllm serve` needs no particular cwd.)
     # vLLM CLI serves an OpenAI-compatible API on /v1/*.
     # gpt-oss-20b (MoE, ~13.7 GiB MXFP4 weights) on a 24 GB B60 (22.71 GiB usable).
     # NOTE: gpu-memory-utilization sizes weights + the KV pool, but on this XPU
@@ -37,7 +47,9 @@ services:
     # which grow as new request shapes get compiled. At 0.86 the card filled to
     # 22.67/22.71 GiB (0.04 free) -> OOM-on-the-edge, instability and 504s. So
     # 0.75 util (~17 GiB: ~13.7 weights + ~3.3 GiB KV pool) leaves ~2.5 GiB real
-    # headroom for that uncapped compile growth.
+    # headroom for that uncapped compile growth. (The 0.86-OOM figure was measured
+    # on 0.17.0-xpu; 0.75 was re-validated on 0.21.0 compiled — clean boot, KV pool
+    # ~3.96 GiB, no OOM — so the ceiling carries over unchanged.)
     # max-model-len 65536 (64k): the model is natively 128k (YaRN,
     # max_position_embeddings=131072), but 64k is ample for chat and keeps the
     # reserved pool + activation buffers small. gpt-oss's alternating
