@@ -25,8 +25,8 @@ services:
       - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration (see devices: above)
       - hf-cache:/root/.cache/huggingface
       # Compiled kernels are image-version-specific. When upgrading the image,
-      # clear this cache ONCE (`docker compose down` then
-      # `docker volume rm llm_vllm-cache`) so the new image compiles fresh — that
+      # clear this cache ONCE (`docker compose -f docker-compose.vllm.yml down`
+      # then `docker volume rm llm_vllm-cache`) so the new image compiles fresh — that
       # is the validated path. Steady state it self-fills and speeds restarts.
       - vllm-cache:/root/.cache/vllm
     environment:
@@ -75,79 +75,26 @@ services:
       retries: 60
       start_period: 1800s   # first run downloads ~13 GB + loads model
 
-  # ===========================================================================
-  # A/B BENCHMARK ONLY -- Intel LLM-Scaler vLLM (Arc Pro B-series optimised fork)
-  # ===========================================================================
-  # Guarded behind the "scaler" profile so it NEVER starts on a bare
-  # `docker compose up` and never disturbs the running vllm-xpu service.
-  #
-  # !! ONE GPU (~22.7 GiB). gpt-oss-20b needs ~17 GiB, so this and the `vllm`
-  #    service CANNOT run at the same time (~31 GiB = OOM). Run them one at a
-  #    time. Swap procedure (the production `vllm` goes down for the test, so any
-  #    gateway/UI fronting it is offline meanwhile):
-  #      docker compose stop vllm
-  #      docker compose --profile scaler up -d vllm-scaler
-  #      # first boot is the silent 10-15 min XPU cold start (no logs) -- wait
-  #      VLLM_ENDPOINT=http://localhost:8001 ./bench.sh 400
-  #      docker compose stop vllm-scaler && docker compose start vllm   # restore
-  # ---------------------------------------------------------------------------
-  vllm-scaler:
-    image: intel/llm-scaler-vllm:0.14.0-b8.3.1   # pin exact beta; docs say do NOT use :latest
-    container_name: vllm-scaler
-    profiles: ["scaler"]
-    restart: "no"            # test service -- don't auto-restart on crash
-    devices:
-      - /dev/dri/renderD128:/dev/dri/renderD128
-      - /dev/dri/card1:/dev/dri/card1
-    group_add:
-      - "992"   # host 'render' GID
-      - "44"    # host 'video' GID
-    ipc: host
-    shm_size: "32g"          # llm-scaler docs recommend 32g
-    volumes:
-      - hf-cache:/root/.cache/huggingface      # reuse cached gpt-oss-20b weights -- NO re-download
-      - vllm-scaler-cache:/root/.cache/vllm    # SEPARATE compile cache (version-specific; don't collide with 0.17.0's)
-    environment:
-      HF_HOME: /root/.cache/huggingface
-      ZES_ENABLE_SYSMAN: "1"
-      SYCL_CACHE_PERSISTENT: "1"
-      VLLM_WORKER_MULTIPROC_METHOD: "spawn"     # per llm-scaler docs
-      no_proxy: "localhost,127.0.0.1"
-    ports:
-      - "8001:8001"
-    # The llm-scaler image's default entrypoint drops to a shell, so invoke
-    # vllm serve explicitly via bash -lc (single-element list = one argv string).
-    #
-    # SAFE-BOOT config: --enforce-eager disables torch.compile, which (a) removes
-    # the uncapped Inductor/compile-buffer growth that forced 0.75 util on the
-    # other image -- so 0.85 util is safe here -- and (b) gives a clean first
-    # boot. BUT eager mode is SLOWER than compiled, so it UNDER-states scaler's
-    # real speed. Once it boots clean, drop --enforce-eager and re-bench for the
-    # true number (watch VRAM; back off util if it edges toward OOM).
-    #
-    # gpt-oss-20b is MXFP4 (pre-quantised) -- do NOT pass --quantization.
-    # The --reasoning-parser/--tool-call-parser flag names are inherited from
-    # upstream; if this fork renamed them the server fails fast at startup with
-    # a clear arg error -- adjust then.
-    entrypoint: ["/bin/bash", "-lc"]
-    command:
-      - |
-        vllm serve openai/gpt-oss-20b \
-          --host 0.0.0.0 \
-          --port 8001 \
-          --max-model-len 65536 \
-          --gpu-memory-utilization 0.85 \
-          --enforce-eager \
-          --reasoning-parser openai_gptoss \
-          --enable-auto-tool-choice \
-          --tool-call-parser openai \
-          --served-model-name gpt-oss-20b
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8001 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
-      interval: 30s
-      timeout: 5s
-      retries: 60
-      start_period: 1800s
+# ============================================================================
+# ALTERNATIVE ENGINE — Intel LLM-Scaler vLLM (Arc Pro B-series optimised fork)
+# ============================================================================
+# The scaler engine lives in its OWN file, docker-compose.scaler.yml, and is a
+# DROP-IN replacement for the `vllm` service above: same model, same published
+# :8000, so anything fronting :8000 (gateway/UI) needs no change when you swap.
+#
+# !! ONE GPU (~22.7 GiB). gpt-oss-20b needs ~17 GiB, so the base `vllm` service
+#    and the scaler service CANNOT run at the same time (~31 GiB = OOM). Run
+#    exactly ONE at a time — the split into two files makes that explicit.
+#
+#   Swap to the scaler engine (prod goes offline during the swap):
+#     docker compose -f docker-compose.vllm.yml down          # stop base vLLM
+#     docker compose -f docker-compose.scaler.yml up -d       # scaler on :8000
+#   Swap back:
+#     docker compose -f docker-compose.scaler.yml down
+#     docker compose -f docker-compose.vllm.yml up -d
+#
+# Both files share `name: llm`, so the scaler reuses THIS project's hf-cache
+# volume (`llm_hf-cache`) — the ~13 GB gpt-oss-20b weights are NOT re-downloaded.
 
 # Open WebUI (optional chat UI) is intentionally NOT defined here. It runs as
 # its own Compose project so it can be deployed and updated independently of the
@@ -157,4 +104,3 @@ services:
 volumes:
   hf-cache:
   vllm-cache:
-  vllm-scaler-cache:   # compile cache for the llm-scaler A/B service

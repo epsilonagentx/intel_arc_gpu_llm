@@ -6,15 +6,17 @@ why live in the two role docs:
 - **[README.md](README.md)** — devops / operator: how to run, swap, monitor, troubleshoot.
 - **[DEVELOPER.md](DEVELOPER.md)** — developer: why the config is what it is.
 
-> The Compose project name is pinned to `llm` (`name: llm` in
-> `docker-compose.yml`), so the cache volumes stay `llm_*` regardless of the
-> folder the repo is checked out into.
+> The Compose project name is pinned to `llm` (`name: llm` in both engine
+> compose files), so the cache volumes stay `llm_*` regardless of the
+> folder the repo is checked out into — and so both engines share one weights cache.
 
 ---
 
 ## Current config
 
-Source of truth is `docker-compose.yml`; this table is a snapshot for quick orientation.
+Source of truth is the engine compose files — `docker-compose.vllm.yml` (stock
+`intel/vllm`, the default) and `docker-compose.scaler.yml` (the alternative
+`llm-scaler` engine). This table snapshots the default `vllm` engine for quick orientation.
 
 | | |
 |---|---|

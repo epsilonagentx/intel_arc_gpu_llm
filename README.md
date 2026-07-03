@@ -8,38 +8,51 @@ Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). **Host OS: Linux only** �
 any modern distribution with Docker and the Intel `xe` GPU driver. Windows and
 macOS are not supported: the `xe` kernel driver and the sysfs/hwmon helper
 scripts (`watt.sh`, the troubleshooting `/proc` reads) are Linux-specific.
-Container: `intel/vllm:0.21.0-ubuntu24.04`. This is the **how-to** for running and operating the
-stack. The *why* behind the config (VRAM sizing, the 0.75-util decision,
-quantisation choices) is in [DEVELOPER.md](DEVELOPER.md); a configuration
-overview is in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
+Default engine container: `intel/vllm:0.21.0-ubuntu24.04` (an `llm-scaler`
+alternative is also provided — see *Choosing the inference engine* below). This
+is the **how-to** for running and operating the stack. The *why* behind the
+config (VRAM sizing, the 0.75-util decision, quantisation choices) is in
+[DEVELOPER.md](DEVELOPER.md); a configuration overview is in
+[INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
-The stack is a single vLLM service (port 8000, LAN-exposed) serving
-`gpt-oss-20b`. An optional chat UI (Open WebUI) ships as a **separate** Compose
-file you can bring up alongside it — see *Running Open WebUI (optional)* below.
+The stack runs one vLLM engine (port 8000, LAN-exposed) serving `gpt-oss-20b`,
+from one of two **interchangeable** engine images — stock `intel/vllm` or
+Intel's `llm-scaler` fork. An optional chat UI (Open WebUI) ships as a
+**separate** Compose file you can bring up alongside it — see *Running Open WebUI
+(optional)* below.
 
 ---
 
 ## Running the stack
 
+The engine ships as two interchangeable images, each in its own Compose file —
+pick one; they serve the same `gpt-oss-20b` on the same port `:8000`:
+
+- **`docker-compose.vllm.yml`** — stock `intel/vllm` (the default, recommended).
+- **`docker-compose.scaler.yml`** — Intel's B-series-optimised `llm-scaler` fork
+  (see *Choosing the inference engine* below).
+
+**One GPU → run exactly one engine at a time** (each needs ~17 GiB; together they
+OOM). Neither file uses the default `docker-compose.yml` name, so every command
+names its file with `-f` — which also means you can't start both by accident.
+
 ```bash
-docker compose up -d vllm            # start
-docker compose logs -f vllm          # follow startup
-docker compose stop vllm             # stop
-docker compose up -d --force-recreate vllm   # apply a compose edit
+docker compose -f docker-compose.vllm.yml up -d vllm                    # start
+docker compose -f docker-compose.vllm.yml logs -f vllm                  # follow startup
+docker compose -f docker-compose.vllm.yml stop vllm                     # stop
+docker compose -f docker-compose.vllm.yml up -d --force-recreate vllm   # apply a compose edit
 ```
 
-Naming `vllm` is optional — a bare `docker compose up -d` brings up only the
-engine too, since the A/B `vllm-scaler` service is gated behind the `scaler`
-profile and Open WebUI lives in a separate file. The explicit `vllm` just keeps
-each command unambiguous (and future-proof if another non-profiled service is
-ever added).
+Every command needs `-f docker-compose.vllm.yml` because neither engine file
+uses the default `docker-compose.yml` name — a bare `docker compose up -d` finds
+no config and errors out.
 
-`docker compose logs -f vllm` follows startup. The healthcheck flips to healthy
+The `logs -f vllm` command above follows startup. The healthcheck flips to healthy
 once `/health` returns 200 — that's the signal the model is **served**, not that
 compile is done. The first request after a (re)start triggers ~30–60 s of
 torch.compile work; subsequent requests are fast. The `vllm` service is
 `restart: unless-stopped`, so it auto-starts on a Docker daemon restart — an
-explicit `docker compose stop vllm` is what keeps it down.
+explicit `docker compose -f docker-compose.vllm.yml stop vllm` is what keeps it down.
 
 > **First run on a fresh cache is silent for 10–15 min** (oneAPI/SYCL cold
 > start, no logs). See *Troubleshooting* below to confirm it's working, not
@@ -51,7 +64,7 @@ explicit `docker compose stop vllm` is what keeps it down.
 ## Upgrading the vLLM image
 
 The stack is pinned to `intel/vllm:0.21.0-ubuntu24.04`. Two things differ from the
-earlier `0.17.0-xpu` — both already baked into `docker-compose.yml`, but they bite
+earlier `0.17.0-xpu` — both already baked into `docker-compose.vllm.yml`, but they bite
 if you bump the image yourself:
 
 - **Device passthrough.** 0.21.0 needs the **whole `/dev/dri`** plus a
@@ -62,9 +75,9 @@ if you bump the image yourself:
 - **Compile cache.** torch.compile kernels are image-version-specific, so clear the
   old cache once on upgrade:
   ```bash
-  docker compose down
+  docker compose -f docker-compose.vllm.yml down
   docker volume rm llm_vllm-cache
-  docker compose up -d vllm
+  docker compose -f docker-compose.vllm.yml up -d vllm
   ```
   The first request then runs the usual ~30–60 s compile and the cache repopulates.
 
@@ -74,7 +87,7 @@ if you bump the image yourself:
 
 A swap is two steps — edit the launch command, then force-recreate.
 
-**Step 1 — edit `services.vllm.command` in `docker-compose.yml`.** Change the model-specific knobs:
+**Step 1 — edit `services.vllm.command` in `docker-compose.vllm.yml`.** Change the model-specific knobs:
 
 | Flag | What to change |
 |------|----------------|
@@ -83,10 +96,15 @@ A swap is two steps — edit the launch command, then force-recreate.
 | `--reasoning-parser <NAME>` | Model-family specific. Wrong parser = empty reasoning field, **not** a crash |
 | `--max-model-len <N>` | Context window — must fit VRAM after weights + compile buffers (see DEVELOPER.md) |
 
+(To swap the model on the **scaler** engine instead, edit the `command:` block in
+`docker-compose.scaler.yml` the same way — its `llm-scaler` image is what unlocks
+quantised MoE such as `Qwen3-30B-A3B-GPTQ-Int4`; see *Choosing the inference
+engine*.)
+
 **Step 2 — recreate the container:**
 
 ```bash
-docker compose up -d --force-recreate vllm
+docker compose -f docker-compose.vllm.yml up -d --force-recreate vllm
 ```
 
 `--force-recreate` is required: vLLM caches its CLI args in the container, so a
@@ -144,7 +162,7 @@ To serve **Qwen3-32B-AWQ** instead, edit that block to:
         --served-model-name qwen3-32b
 ```
 
-…then `docker compose up -d --force-recreate vllm`. What changed and why:
+…then `docker compose -f docker-compose.vllm.yml up -d --force-recreate vllm`. What changed and why:
 
 - **Repo + served name** → `Qwen/Qwen3-32B-AWQ`, called `qwen3-32b` by clients (update any gateway's model mapping to match).
 - **`--max-model-len` 65536 → 7168** — the empirical B60 cap for this model; 10k and 12k both fail vLLM's KV pre-check at startup.
@@ -174,6 +192,7 @@ MODEL=gpt-oss-20b VLLM_ENDPOINT=http://192.168.x.x:8000 ./bench.sh 600  # remote
   appears.
 - **Second positional arg** = custom prompt.
 - **`VLLM_ENDPOINT=`** overrides the endpoint (default `http://localhost:8000`).
+  Both engines publish `:8000`, so the same command benchmarks whichever is up.
 
 Two TTFT numbers are printed: `TTFT (any)` = first token of any kind ("is it
 alive"), `TTFT (content)` = first user-visible token after reasoning finishes
@@ -192,7 +211,8 @@ throughput under concurrent load is much higher; this bench is one-user only.
 A fast end-to-end **correctness** check of the running service (where `bench.sh`
 measures *speed*): confirms the model is served, plain chat generates content, the
 reasoning trace comes through (`message.reasoning`), and tool-calling emits a
-`tool_call`. Handy right after a (re)start, a model swap, or an image upgrade.
+`tool_call`. Handy right after a (re)start, a model swap, an image upgrade, or a
+switch between the base and scaler engines.
 
 ```bash
 ./smoke.sh                                          # localhost:8000, model gpt-oss-20b
@@ -291,9 +311,9 @@ Host path: `/var/lib/docker/volumes/llm_<name>/_data`
 
 | Volume | Contents | Notes |
 |--------|----------|-------|
-| `hf-cache` | HF model weights | Survives compose changes |
-| `vllm-cache` | torch.compile + AOT artifacts | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
-| `vllm-scaler-cache` | A/B service compile cache | Only created when the `scaler` profile first boots |
+| `hf-cache` | HF model weights | Survives compose changes; **shared by both engines** (no re-download when you swap) |
+| `vllm-cache` | torch.compile + AOT artifacts (base engine) | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
+| `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`docker-compose.scaler.yml`) first boots |
 
 Open WebUI's data lives in its own project, so its volume is
 `open-webui_open-webui-data` (not `llm_*`) — see *Running Open WebUI (optional)*.
@@ -320,8 +340,8 @@ docker compose -f docker-compose.openwebui.yml logs -f    # follow
 docker compose -f docker-compose.openwebui.yml down       # stop
 ```
 
-**Start vLLM first.** These are two independent Compose projects, so there's no
-automatic `depends_on` linking them. Order isn't fatal, though — if you start the
+**Start a vLLM engine first.** These are independent Compose projects, so there's
+no automatic `depends_on` linking them. Order isn't fatal, though — if you start the
 UI first it runs fine but shows no models until vLLM is reachable, then they
 appear on refresh. Both services are `restart: unless-stopped`, so after a host
 reboot they self-start and the UI populates once vLLM is healthy.
@@ -333,32 +353,46 @@ through the **host's published port**, not by Docker service name:
 - **Same host (default):** `OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1`
   — the file maps `host.docker.internal` to the host gateway (Linux).
 - **Different host:** set `OPENAI_API_BASE_URL=http://<vllm-host>:8000/v1`.
-- **A/B scaler:** point it at `:8001` while the `vllm-scaler` profile is up (only
-  one of `vllm` / `vllm-scaler` runs at a time on the single GPU).
+- **Scaler engine:** no change needed — `docker-compose.scaler.yml` also serves
+  on `:8000` (only one engine runs at a time on the single GPU).
 
 Chats/users/settings persist in the `open-webui_open-webui-data` volume across
 restarts. It renders `message.reasoning` as a collapsible panel out of the box.
 
 ---
 
-## A/B testing the llm-scaler image
+## Choosing the inference engine (base vs llm-scaler)
 
-A second vLLM image (Intel's B-series-optimised `llm-scaler` fork) is wired up
-behind the `scaler` compose profile so it never starts on a bare `up`. **One
-GPU** — the scaler and the main `vllm` service **cannot run at the same time**
-(the VRAM math is in [DEVELOPER.md](DEVELOPER.md)). Run them one at a time:
+The stack ships two interchangeable vLLM engines — the stock `intel/vllm`
+(`docker-compose.vllm.yml`, the default) and Intel's B-series-optimised
+`llm-scaler` fork (`docker-compose.scaler.yml`). Both serve `gpt-oss-20b` on
+`:8000`, so whichever is up, downstream clients need no change. **One GPU — they
+cannot run at the same time** (the VRAM math is in [DEVELOPER.md](DEVELOPER.md)).
+Swap one for the other:
 
 ```bash
-docker compose stop vllm
-docker compose --profile scaler up -d vllm-scaler
+docker compose -f docker-compose.vllm.yml down            # stop the base engine
+docker compose -f docker-compose.scaler.yml up -d         # start the scaler engine on :8000
 # first boot = the silent 10–15 min XPU cold start (no logs) — wait
-VLLM_ENDPOINT=http://localhost:8001 ./bench.sh 400
-docker compose stop vllm-scaler && docker compose start vllm   # restore
+./bench.sh 400                                            # benchmark it (default endpoint :8000)
+./smoke.sh                                               # verify reasoning + tool-calling still work
+#   …and back to the base engine:
+docker compose -f docker-compose.scaler.yml down
+docker compose -f docker-compose.vllm.yml up -d
 ```
 
-The staged config boots with `--enforce-eager` (safe first boot). Why — and the
-"drop eager and re-bench for the true number" follow-up — are in
-[DEVELOPER.md](DEVELOPER.md).
+Why you might switch: the `llm-scaler` fork is tuned for Arc B-series and its
+image unlocks quantised-MoE paths that the stock image doesn't (e.g.
+`Qwen3-30B-A3B-GPTQ-Int4`). Benchmark it against the stock engine before adopting
+it in prod — the stock image has since jumped `0.17`→`0.21`, so the fork is no
+longer strictly newer, and the win (if any) has to be measured, not assumed.
+
+The scaler config boots with `--enforce-eager` (safe first boot, but slower — so
+it under-states the engine's real speed). Dropping eager for the true number,
+plus the VRAM re-tune it then needs, is covered in [DEVELOPER.md](DEVELOPER.md).
+The fork inherits upstream's parser flag names but that's unverified here, so run
+`./smoke.sh` to confirm the reasoning channel and tool-calling work before
+trusting it in prod.
 
 ---
 

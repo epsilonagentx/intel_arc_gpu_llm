@@ -1,6 +1,7 @@
 # Optional chat UI — Open WebUI — deployed as its OWN Compose project.
 #
-# Kept separate from docker-compose.yml (the vLLM inference engine) on purpose,
+# Kept separate from the engine compose files (docker-compose.vllm.yml /
+# docker-compose.scaler.yml) on purpose,
 # so the UI can be deployed/updated independently and is never required to run
 # the stack. Open WebUI is just ONE example of an OpenAI-compatible chat UI —
 # swap in any client you prefer.
@@ -11,7 +12,7 @@
 #    WEBUI_AUTH=true, pin CORS_ALLOW_ORIGIN to your origin, and firewall or
 #    localhost-bind the port.
 #
-#   Start (vLLM must already be up — see docker-compose.yml):
+#   Start (a vLLM engine must already be up — see docker-compose.vllm.yml):
 #     docker compose -f docker-compose.openwebui.yml up -d
 #   Open:  http://localhost:3000     (auth disabled by default)
 #   Logs:  docker compose -f docker-compose.openwebui.yml logs -f
@@ -23,8 +24,8 @@
 #   - Same host (default): host.docker.internal -> host gateway (Linux), so the
 #     URL below hits the vllm container's published :8000.
 #   - Different host: set OPENAI_API_BASE_URL to http://<vllm-host>:8000/v1.
-#   - A/B scaler: use :8001 while the `vllm-scaler` profile is up (only one of
-#     vllm / vllm-scaler runs at a time on the single GPU).
+#   - Scaler engine: no change needed — docker-compose.scaler.yml also publishes
+#     :8000 (only one of the two engines runs at a time on the single GPU).
 #
 # Its own project name keeps the data volume predictable
 # (open-webui_open-webui-data) instead of taking the checkout-folder name.
@@ -42,7 +43,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       # vLLM's OpenAI-compatible endpoint, via the host's published :8000.
-      # Remote vLLM host -> http://<vllm-host>:8000/v1 ; scaler -> :8001.
+      # Remote vLLM host -> http://<vllm-host>:8000/v1. Works unchanged whether
+      # the base or the scaler engine is up (both publish :8000).
       OPENAI_API_BASE_URL: "http://host.docker.internal:8000/v1"
       OPENAI_API_KEY: "EMPTY"           # vLLM doesn't require auth by default
       ENABLE_OLLAMA_API: "false"
