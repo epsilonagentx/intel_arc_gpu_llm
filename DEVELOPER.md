@@ -140,8 +140,9 @@ for a first benchmark.
 
 **`--enforce-eager` caveat:** the staged config boots with `--enforce-eager`,
 which (a) disables torch.compile — removing the uncapped Inductor buffer growth
-that forced 0.75 util on the stock image, so 0.85 util is safe there — and (b)
-gives a clean first boot. **But eager mode is slower than compiled**, so it
+that forced 0.75 util on the stock image, so a higher util would be safe here
+(we keep 0.75 to match the base vLLM engine) — and (b) gives a clean first
+boot. **But eager mode is slower than compiled**, so it
 under-states the scaler's real speed. Once it boots clean, drop
 `--enforce-eager` and re-bench for the true number (watch VRAM; back off util if
 it edges toward OOM). gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass

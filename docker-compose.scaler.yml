@@ -78,8 +78,10 @@ services:
     # correctness failure, no crash/NaN in logs). Inductor's compiled graph is
     # broken for this MXFP4 MoE on XPU here; the fork's own custom kernels only
     # produce valid output in eager. So keep --enforce-eager: it disables
-    # torch.compile (no compile-buffer growth → 0.85 util is safe) and is the ONLY
-    # mode that generates real text. Measured ~80 tok/s single-stream = the
+    # torch.compile (no compile-buffer growth, so util isn't constrained by
+    # Inductor buffers — 0.85 would be safe, but we keep 0.75 to match the base
+    # vLLM engine) and is the ONLY mode that generates real text. Measured
+    # ~80 tok/s single-stream = the
     # scaler's real number (NOT an under-statement — compiled is not an option).
     #
     # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
@@ -94,7 +96,7 @@ services:
           --host 0.0.0.0 \
           --port 8000 \
           --max-model-len 65536 \
-          --gpu-memory-utilization 0.85 \
+          --gpu-memory-utilization 0.75 \
           --enforce-eager \
           --reasoning-parser openai_gptoss \
           --enable-auto-tool-choice \
