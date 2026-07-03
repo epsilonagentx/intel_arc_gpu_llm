@@ -3,10 +3,13 @@
 Why the config in `docker-compose.yml` is the way it is. For how to *operate* the
 stack see [README.md](README.md); for a configuration overview see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
-All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)** with
-`intel/vllm:0.17.0-xpu`. They are not portable to other cards or images without
-re-checking. The host is **Linux only** — the Intel `xe` GPU driver is
-Linux-specific, so Windows and macOS are out of scope.
+All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)**. The
+stack upgraded from `intel/vllm:0.17.0-xpu` to **`intel/vllm:0.21.0-ubuntu24.04`**;
+the gpt-oss-20b boot and the `0.75` util ceiling were re-validated on 0.21.0, but
+the other 0.17.0-era measurements below (Qwen3 context caps, the 0.86-OOM edge, the
+reasoning-effort latencies) have **not** been re-run on 0.21.0. Nothing here is
+portable to other cards or images without re-checking. The host is **Linux only** —
+the Intel `xe` GPU driver is Linux-specific, so Windows and macOS are out of scope.
 
 ---
 
@@ -19,6 +22,10 @@ growing as new request shapes get compiled.
 At **0.86** the card filled to 22.67 / 22.71 GiB (~0.04 GiB free) → OOM-on-the-edge,
 instability, and 504s. **0.75** (~17 GiB: ~13.7 GiB weights + ~3.3 GiB KV pool)
 leaves ~2.5 GiB of real headroom for that uncapped compile growth.
+
+Re-validated on `0.21.0-ubuntu24.04` (compiled, production flags): clean boot, KV
+pool ~3.96 GiB, no OOM at 0.75 — the ceiling carries over unchanged. The 0.86-OOM
+edge above was characterised on `0.17.0-xpu` and not re-tested on 0.21.0.
 
 **The trap:** util looks like a headroom dial but it doesn't account for the
 compile buffers. To grow capacity, raise `--max-model-len` and re-check real
@@ -83,21 +90,35 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 
 ## Image / version notes
 
-- `intel/vllm:0.17.0-xpu` reports vLLM `0.1.dev14456`, but that dev string is an
-  scm artifact — it's a **frozen release-tag build**, not rolling `main`.
-- Model support tops out at **Gemma3n**; **Gemma 4 is not supported** on this
-  image. The `qwen3` and `openai_gptoss` reasoning parsers are both present.
-- Reasoning trace field is `message.reasoning`, not `reasoning_content` — see
-  [README.md](README.md) for the consumer-parsing implication.
+- The stack runs **`intel/vllm:0.21.0-ubuntu24.04`** (reports vLLM
+  `v0.21.1.dev17+g0a4756bb5`; the `dev` suffix is an scm artifact). The tag scheme
+  dropped the `-xpu` suffix of older images, but it **is** the Intel Arc/XPU build
+  — `device_config=xpu` and torch.compile runs on the B60, verified by booting
+  gpt-oss-20b on it.
+- **Device passthrough differs from `0.17.0-xpu`:** 0.21.0 requires the whole
+  `/dev/dri` **plus** a `/dev/dri/by-path:ro` mount (oneCCL enumerates via
+  `by-path` on warm-up) or it won't boot. Details in `docker-compose.yml` and the
+  README's *Upgrading the vLLM image*.
+- **Gemma 4 arches are now registered** (`gemma4` / `gemma4_mm`) — unlike
+  `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate,
+  but running Gemma 4 on the B60 is still unproven here (XPU quant-kernel gaps), so
+  this stack stays on gpt-oss-20b. The `qwen3` and `openai_gptoss` reasoning parsers
+  are present as before.
+- Reasoning trace field is still `message.reasoning`, not `reasoning_content`
+  (re-verified on 0.21.0) — see [README.md](README.md) for the consumer-parsing
+  implication.
+- Predecessor: `0.17.0-xpu` was a frozen release-tag build (reported vLLM
+  `0.1.dev14456`) that topped out at Gemma3n — kept here for upgrade context.
 
 ---
 
 ## llm-scaler A/B benchmark (design)
 
 **Goal:** measure whether Intel's B-series-optimised `llm-scaler-vllm` fork
-decodes gpt-oss-20b faster than the stock `intel/vllm:0.17.0-xpu`. Single-stream
-decode baseline on stock is **~60 tok/s** on the B60 (measured single-stream via
-`bench.sh`) — that's the yardstick.
+decodes gpt-oss-20b faster than the stock `intel/vllm` image. The single-stream
+decode baseline of **~60 tok/s** on the B60 (via `bench.sh`) was measured on
+`0.17.0-xpu`; re-baseline on the current `0.21.0-ubuntu24.04` before comparing —
+that's the yardstick.
 
 **Why it's gated behind the `scaler` compose profile:** there is one GPU
 (~22.7 GiB) and gpt-oss-20b needs ~17 GiB, so the scaler and the production

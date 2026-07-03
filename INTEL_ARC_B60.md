@@ -20,7 +20,8 @@ Source of truth is `docker-compose.yml`; this table is a snapshot for quick orie
 |---|---|
 | Host OS | **Linux only** (Intel `xe` GPU driver + Docker; no Windows/macOS) |
 | Service | `vllm` (container `vllm-xpu`) |
-| Image | `intel/vllm:0.17.0-xpu` |
+| Image | `intel/vllm:0.21.0-ubuntu24.04` |
+| Devices | whole `/dev/dri` + `/dev/dri/by-path` bind-mount (oneCCL enumeration) |
 | Model | `openai/gpt-oss-20b`, served as **`gpt-oss-20b`** |
 | Endpoint | `http://localhost:8000/v1` (LAN-exposed on port 8000) |
 | Context | `--max-model-len 65536` (64k) |
