@@ -32,7 +32,7 @@ name: open-webui
 
 services:
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.10.2
     container_name: open-webui
     restart: unless-stopped
     # A separate project = a separate network, so the vLLM service name does not
