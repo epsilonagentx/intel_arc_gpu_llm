@@ -6,15 +6,18 @@ why live in the two role docs:
 - **[README.md](README.md)** — devops / operator: how to run, swap, monitor, troubleshoot.
 - **[DEVELOPER.md](DEVELOPER.md)** — developer: why the config is what it is.
 
-> The Compose project name is pinned to `llm` (`name: llm` in
-> `docker-compose.yml`), so the cache volumes stay `llm_*` regardless of the
-> folder the repo is checked out into.
+> The Compose project name is pinned to `llm` (`name: llm` in both engine
+> compose files), so the cache volumes stay `llm_*` regardless of the
+> folder the repo is checked out into — and so both engines share one weights cache.
 
 ---
 
 ## Current config
 
-Source of truth is `docker-compose.yml`; this table is a snapshot for quick orientation.
+Source of truth is the engine compose files — `vllm_xpu/compose.yaml` (stock
+`intel/vllm`, the default; values overridable via `vllm_xpu/.env`, see
+`vllm_xpu/.env.example`) and `scaler/compose.yaml` (the alternative
+`llm-scaler` engine). This table snapshots the default `vllm` engine for quick orientation.
 
 | | |
 |---|---|
@@ -31,8 +34,8 @@ Source of truth is `docker-compose.yml`; this table is a snapshot for quick orie
 
 ## Cached models
 
-Swapping the served model is one compose edit, with no re-download for a model
-that's already cached — see the README's swap procedure. Sizes below are on-disk
+Swapping the served model is a `vllm_xpu/.env` edit, with no re-download for a
+model that's already cached — see the README's swap procedure. Sizes below are on-disk
 footprint; loaded-weight GiB and context caps are in [DEVELOPER.md](DEVELOPER.md).
 
 - `openai/gpt-oss-20b` (~13 GB on disk) — the configured/served model
@@ -49,7 +52,7 @@ tool/UI that talks to it directly:
   routing, key management, or multiple backends (`api_key` can be any value;
   vLLM needs no auth).
 - **Any containerized tool / UI** that speaks the OpenAI API — such as Open
-  WebUI, a self-hosted chat UI provided as an optional separate Compose file
-  (`docker-compose.openwebui.yml`).
+  WebUI, a self-hosted chat UI provided as an optional separate Compose project
+  (`open_web_ui/compose.yaml`).
 
 See the README's *Clients* and *Running Open WebUI* sections for details.
