@@ -1,6 +1,7 @@
 # Local LLM stack — developer notes (the *why*)
 
-Why the config in `docker-compose.yml` is the way it is. For how to *operate* the
+Why the config in the engine compose files (`vllm_xpu/compose.yaml` and
+`scaler/compose.yaml`) is the way it is. For how to *operate* the
 stack see [README.md](README.md); for a configuration overview see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)**. The
@@ -54,7 +55,7 @@ Known-good empirical values on the B60:
 
 | Model | Weights (loaded) | Working `--max-model-len` | Notes |
 |-------|------------------|----------------------------|-------|
-| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; the value shipped in `docker-compose.yml` |
+| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; the value shipped in `vllm_xpu/compose.yaml` |
 | Qwen3-32B-AWQ | 18.14 GiB | **7168** | 12k and 10k both failed the pre-check |
 
 *Weights here are the loaded figure vLLM reports at startup (GiB); the ≈GB
@@ -97,7 +98,7 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
   gpt-oss-20b on it.
 - **Device passthrough differs from `0.17.0-xpu`:** 0.21.0 requires the whole
   `/dev/dri` **plus** a `/dev/dri/by-path:ro` mount (oneCCL enumerates via
-  `by-path` on warm-up) or it won't boot. Details in `docker-compose.yml` and the
+  `by-path` on warm-up) or it won't boot. Details in `vllm_xpu/compose.yaml` and the
   README's *Upgrading the vLLM image*.
 - **Gemma 4 arches are now registered** (`gemma4` / `gemma4_mm`) — unlike
   `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate,
@@ -112,27 +113,37 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 
 ---
 
-## llm-scaler A/B benchmark (design)
+## Choosing the inference engine: base vs llm-scaler
 
-**Goal:** measure whether Intel's B-series-optimised `llm-scaler-vllm` fork
-decodes gpt-oss-20b faster than the stock `intel/vllm` image. The single-stream
-decode baseline of **~60 tok/s** on the B60 (via `bench.sh`) was measured on
-`0.17.0-xpu`; re-baseline on the current `0.21.0-ubuntu24.04` before comparing —
-that's the yardstick.
+Two interchangeable engine images serve the same gpt-oss-20b on the same
+`:8000`, so either can be production — one at a time (single GPU). Each has its
+own folder: `vllm_xpu/compose.yaml` (stock `intel/vllm`, the default)
+and `scaler/compose.yaml` (Intel's B-series-optimised `llm-scaler-vllm`
+fork). The operator swap/run procedure is in the README.
 
-**Why it's gated behind the `scaler` compose profile:** there is one GPU
-(~22.7 GiB) and gpt-oss-20b needs ~17 GiB, so the scaler and the production
-`vllm` service can't coexist (~31 GiB = OOM). The profile guarantees the scaler
-never starts on a bare `docker compose up` and never disturbs the running
-service. The operator run procedure is in the README.
+**Why compare:** measure whether the `llm-scaler` fork decodes gpt-oss-20b
+faster than the stock image. The single-stream decode baseline of **~60 tok/s**
+on the B60 (via `bench.sh`) was measured on `0.17.0-xpu`; re-baseline on the
+current `0.21.0-ubuntu24.04` stock image before comparing — that's the yardstick.
+Note the stock image has since jumped `0.17`→`0.21`, so the fork (built on an
+older vLLM base) is no longer strictly newer than what it's being compared to.
 
-**Image:** use the pinned beta tag `intel/llm-scaler-vllm:0.14.0-b8.3.1` — the
-fork's docs warn against `:latest`.
+**Why two folders, not a compose profile:** one GPU (~22.7 GiB) and gpt-oss-20b
+needs ~17 GiB, so the two engines can't coexist (~31 GiB = OOM). A separate
+folder per engine means every `up` must target an engine's folder (cd into it,
+or `-f` its `compose.yaml`), so you can't start both by accident and "which
+engine is prod" is always explicit.
+
+**Image:** pinned to `intel/llm-scaler-vllm:0.14.0-b8.3.2` (the current build;
+the fork's docs warn against `:latest`). b8.3.2 vs the prior b8.3.1 is only a
+Qwen3.5/3.6-27B accuracy fix — no gpt-oss-20b impact — but it's the right base
+for a first benchmark.
 
 **`--enforce-eager` caveat:** the staged config boots with `--enforce-eager`,
 which (a) disables torch.compile — removing the uncapped Inductor buffer growth
-that forced 0.75 util on the stock image, so 0.85 util is safe there — and (b)
-gives a clean first boot. **But eager mode is slower than compiled**, so it
+that forced 0.75 util on the stock image, so a higher util would be safe here
+(we keep 0.75 to match the base vLLM engine) — and (b) gives a clean first
+boot. **But eager mode is slower than compiled**, so it
 under-states the scaler's real speed. Once it boots clean, drop
 `--enforce-eager` and re-bench for the true number (watch VRAM; back off util if
 it edges toward OOM). gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass
