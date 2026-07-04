@@ -1,7 +1,7 @@
 # Local LLM stack — developer notes (the *why*)
 
-Why the config in the engine compose files (`docker-compose.vllm.yml` and
-`docker-compose.scaler.yml`) is the way it is. For how to *operate* the
+Why the config in the engine compose files (`vllm_xpu/compose.yaml` and
+`scaler/compose.yaml`) is the way it is. For how to *operate* the
 stack see [README.md](README.md); for a configuration overview see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)**. The
@@ -55,7 +55,7 @@ Known-good empirical values on the B60:
 
 | Model | Weights (loaded) | Working `--max-model-len` | Notes |
 |-------|------------------|----------------------------|-------|
-| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; the value shipped in `docker-compose.vllm.yml` |
+| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; the value shipped in `vllm_xpu/compose.yaml` |
 | Qwen3-32B-AWQ | 18.14 GiB | **7168** | 12k and 10k both failed the pre-check |
 
 *Weights here are the loaded figure vLLM reports at startup (GiB); the ≈GB
@@ -98,7 +98,7 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
   gpt-oss-20b on it.
 - **Device passthrough differs from `0.17.0-xpu`:** 0.21.0 requires the whole
   `/dev/dri` **plus** a `/dev/dri/by-path:ro` mount (oneCCL enumerates via
-  `by-path` on warm-up) or it won't boot. Details in `docker-compose.vllm.yml` and the
+  `by-path` on warm-up) or it won't boot. Details in `vllm_xpu/compose.yaml` and the
   README's *Upgrading the vLLM image*.
 - **Gemma 4 arches are now registered** (`gemma4` / `gemma4_mm`) — unlike
   `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate,
@@ -117,8 +117,8 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 
 Two interchangeable engine images serve the same gpt-oss-20b on the same
 `:8000`, so either can be production — one at a time (single GPU). Each has its
-own compose file: `docker-compose.vllm.yml` (stock `intel/vllm`, the default)
-and `docker-compose.scaler.yml` (Intel's B-series-optimised `llm-scaler-vllm`
+own folder: `vllm_xpu/compose.yaml` (stock `intel/vllm`, the default)
+and `scaler/compose.yaml` (Intel's B-series-optimised `llm-scaler-vllm`
 fork). The operator swap/run procedure is in the README.
 
 **Why compare:** measure whether the `llm-scaler` fork decodes gpt-oss-20b
@@ -128,10 +128,11 @@ current `0.21.0-ubuntu24.04` stock image before comparing — that's the yardsti
 Note the stock image has since jumped `0.17`→`0.21`, so the fork (built on an
 older vLLM base) is no longer strictly newer than what it's being compared to.
 
-**Why two files, not a compose profile:** one GPU (~22.7 GiB) and gpt-oss-20b
-needs ~17 GiB, so the two engines can't coexist (~31 GiB = OOM). Separate files —
-and no default `docker-compose.yml` — mean every `up` must name its file, so you
-can't start both by accident and "which engine is prod" is always explicit.
+**Why two folders, not a compose profile:** one GPU (~22.7 GiB) and gpt-oss-20b
+needs ~17 GiB, so the two engines can't coexist (~31 GiB = OOM). A separate
+folder per engine means every `up` must target an engine's folder (cd into it,
+or `-f` its `compose.yaml`), so you can't start both by accident and "which
+engine is prod" is always explicit.
 
 **Image:** pinned to `intel/llm-scaler-vllm:0.14.0-b8.3.2` (the current build;
 the fork's docs warn against `:latest`). b8.3.2 vs the prior b8.3.1 is only a

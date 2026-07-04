@@ -14,8 +14,9 @@ why live in the two role docs:
 
 ## Current config
 
-Source of truth is the engine compose files — `docker-compose.vllm.yml` (stock
-`intel/vllm`, the default) and `docker-compose.scaler.yml` (the alternative
+Source of truth is the engine compose files — `vllm_xpu/compose.yaml` (stock
+`intel/vllm`, the default; values overridable via `vllm_xpu/.env`, see
+`vllm_xpu/.env.example`) and `scaler/compose.yaml` (the alternative
 `llm-scaler` engine). This table snapshots the default `vllm` engine for quick orientation.
 
 | | |
@@ -33,8 +34,8 @@ Source of truth is the engine compose files — `docker-compose.vllm.yml` (stock
 
 ## Cached models
 
-Swapping the served model is one compose edit, with no re-download for a model
-that's already cached — see the README's swap procedure. Sizes below are on-disk
+Swapping the served model is a `vllm_xpu/.env` edit, with no re-download for a
+model that's already cached — see the README's swap procedure. Sizes below are on-disk
 footprint; loaded-weight GiB and context caps are in [DEVELOPER.md](DEVELOPER.md).
 
 - `openai/gpt-oss-20b` (~13 GB on disk) — the configured/served model
@@ -51,7 +52,7 @@ tool/UI that talks to it directly:
   routing, key management, or multiple backends (`api_key` can be any value;
   vLLM needs no auth).
 - **Any containerized tool / UI** that speaks the OpenAI API — such as Open
-  WebUI, a self-hosted chat UI provided as an optional separate Compose file
-  (`docker-compose.openwebui.yml`).
+  WebUI, a self-hosted chat UI provided as an optional separate Compose project
+  (`open_web_ui/compose.yaml`).
 
 See the README's *Clients* and *Running Open WebUI* sections for details.

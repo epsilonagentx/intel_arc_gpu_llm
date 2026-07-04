@@ -1,17 +1,17 @@
 # ALTERNATIVE INFERENCE ENGINE — Intel LLM-Scaler vLLM (Arc Pro B-series fork).
 #
-# This is a DROP-IN replacement for the base `vllm` service in docker-compose.vllm.yml:
+# This is a DROP-IN replacement for the base `vllm` service in vllm_xpu/compose.yaml:
 # same model (gpt-oss-20b), same published port (:8000), so any gateway/UI
 # fronting :8000 (LiteLLM / Bifrost / Open WebUI) needs NO change when you swap.
-# Run EITHER this OR docker-compose.vllm.yml — never both (see the single-GPU note).
+# Run EITHER this OR vllm_xpu/compose.yaml — never both (see the single-GPU note).
 #
-# WHY A SEPARATE FILE (not a profile): both engines are prod candidates you run
-# one at a time to compare on the real workload. Keeping each in its own file
-# makes "which engine is prod right now" explicit — and since neither file uses
-# the default compose name, every `up` must name its file, so you can't start
-# both by accident.
+# WHY A SEPARATE FOLDER (not a profile): both engines are prod candidates you run
+# one at a time to compare on the real workload. Keeping each in its own folder
+# makes "which engine is prod right now" explicit — every `up` must target an
+# engine's folder (cd into it, or -f its compose.yaml from the repo root), so
+# you can't start both by accident.
 #
-# name: llm  <-- SAME project as docker-compose.vllm.yml ON PURPOSE, so this reuses
+# name: llm  <-- SAME project as vllm_xpu/compose.yaml ON PURPOSE, so this reuses
 # that project's `llm_hf-cache` volume: the ~13 GB gpt-oss-20b weights are shared,
 # NOT re-downloaded. (The compile cache is separate — kernels are image-specific.)
 name: llm
@@ -20,14 +20,15 @@ name: llm
 # !! SINGLE GPU (~22.7 GiB usable). gpt-oss-20b needs ~17 GiB, so this service
 #    and the base `vllm` service CANNOT run together (~31 GiB = OOM).
 #
-#   Swap FROM base vLLM TO the scaler engine (prod is offline during the swap):
-#     docker compose -f docker-compose.vllm.yml down          # stop base vLLM
-#     docker compose -f docker-compose.scaler.yml up -d       # scaler on :8000
+#   Swap FROM base vLLM TO the scaler engine (from the repo root; prod is
+#   offline during the swap):
+#     docker compose -f vllm_xpu/compose.yaml down       # stop base vLLM
+#     docker compose -f scaler/compose.yaml up -d        # scaler on :8000
 #     # first boot = a SILENT 10-15 min XPU cold start (no logs) — wait it out
 #   Swap back to base vLLM:
-#     docker compose -f docker-compose.scaler.yml down
-#     docker compose -f docker-compose.vllm.yml up -d
-#   Logs:  docker compose -f docker-compose.scaler.yml logs -f
+#     docker compose -f scaler/compose.yaml down
+#     docker compose -f vllm_xpu/compose.yaml up -d
+#   Logs:  docker compose -f scaler/compose.yaml logs -f
 #
 # STATUS (2026-07-03): eager validated — clean boot, correctness passes, ~80 tok/s
 # single-stream. COMPILED MODE TESTED & REJECTED: dropping --enforce-eager makes
@@ -48,7 +49,7 @@ services:
     # base that booted with just these nodes). If boot dies on oneCCL
     # ze_fd_manager / by-path enumeration (as the 0.21.0 base image does), switch
     # to the whole-/dev/dri + `/dev/dri/by-path:ro` volume combo from
-    # docker-compose.vllm.yml.
+    # vllm_xpu/compose.yaml.
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128
       - /dev/dri/card1:/dev/dri/card1
@@ -110,5 +111,5 @@ services:
       start_period: 1800s
 
 volumes:
-  hf-cache:              # shared with docker-compose.vllm.yml (project `llm`)
+  hf-cache:              # shared with vllm_xpu/compose.yaml (project `llm`)
   vllm-scaler-cache:     # compile cache for the llm-scaler engine

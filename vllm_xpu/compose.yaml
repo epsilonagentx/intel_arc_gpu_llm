@@ -25,8 +25,8 @@ services:
       - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration (see devices: above)
       - hf-cache:/root/.cache/huggingface
       # Compiled kernels are image-version-specific. When upgrading the image,
-      # clear this cache ONCE (`docker compose -f docker-compose.vllm.yml down`
-      # then `docker volume rm llm_vllm-cache`) so the new image compiles fresh — that
+      # clear this cache ONCE (from this folder: `docker compose down`, then
+      # `docker volume rm llm_vllm-cache`) so the new image compiles fresh — that
       # is the validated path. Steady state it self-fills and speeds restarts.
       - vllm-cache:/root/.cache/vllm
     environment:
@@ -58,16 +58,26 @@ services:
     # raise max-model-len AND re-check real VRAM headroom -- do NOT just bump util.
     # gpt-oss is reasoning-native (harmony format); the openai_gptoss parser
     # exposes the analysis channel as message.reasoning for clients like Open WebUI.
+    # --- .env overrides --------------------------------------------------------
+    # The ${VAR:-default} values are Compose-interpolated from `.env` IN THIS
+    # FOLDER — Compose auto-reads it, no flags needed (that is why this file
+    # lives in its own folder). No .env? The defaults below render exactly the
+    # validated B60 command, so the file is fully runnable as-is. To override:
+    #   cp .env.example .env   # then uncomment/edit values and `docker compose up -d`
+    # Every variable is VALUE-ONLY: flag names live in this command, values come
+    # from .env. Optional flags that are NOT part of the validated recipe are
+    # catalogued in .env.example — each entry shows the exact `--flag ${VAR:-…}`
+    # line to add to this command when you want it.
     command: >
-      vllm serve openai/gpt-oss-20b
+      vllm serve ${VLLM_MODEL:-openai/gpt-oss-20b}
         --host 0.0.0.0
         --port 8000
-        --max-model-len 65536
-        --gpu-memory-utilization 0.75
-        --reasoning-parser openai_gptoss
+        --max-model-len ${VLLM_MAX_MODEL_LEN:-65536}
+        --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.75}
+        --reasoning-parser ${VLLM_REASONING_PARSER:-openai_gptoss}
         --enable-auto-tool-choice
-        --tool-call-parser openai
-        --served-model-name gpt-oss-20b
+        --tool-call-parser ${VLLM_TOOL_CALL_PARSER:-openai}
+        --served-model-name ${VLLM_SERVED_MODEL_NAME:-gpt-oss-20b}
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 30s
@@ -78,27 +88,27 @@ services:
 # ============================================================================
 # ALTERNATIVE ENGINE — Intel LLM-Scaler vLLM (Arc Pro B-series optimised fork)
 # ============================================================================
-# The scaler engine lives in its OWN file, docker-compose.scaler.yml, and is a
+# The scaler engine lives in its OWN folder, scaler/compose.yaml, and is a
 # DROP-IN replacement for the `vllm` service above: same model, same published
 # :8000, so anything fronting :8000 (gateway/UI) needs no change when you swap.
 #
 # !! ONE GPU (~22.7 GiB). gpt-oss-20b needs ~17 GiB, so the base `vllm` service
 #    and the scaler service CANNOT run at the same time (~31 GiB = OOM). Run
-#    exactly ONE at a time — the split into two files makes that explicit.
+#    exactly ONE at a time — the split into two folders makes that explicit.
 #
-#   Swap to the scaler engine (prod goes offline during the swap):
-#     docker compose -f docker-compose.vllm.yml down          # stop base vLLM
-#     docker compose -f docker-compose.scaler.yml up -d       # scaler on :8000
+#   Swap to the scaler engine (from the repo root; prod goes offline):
+#     docker compose -f vllm_xpu/compose.yaml down       # stop base vLLM
+#     docker compose -f scaler/compose.yaml up -d        # scaler on :8000
 #   Swap back:
-#     docker compose -f docker-compose.scaler.yml down
-#     docker compose -f docker-compose.vllm.yml up -d
+#     docker compose -f scaler/compose.yaml down
+#     docker compose -f vllm_xpu/compose.yaml up -d
 #
 # Both files share `name: llm`, so the scaler reuses THIS project's hf-cache
 # volume (`llm_hf-cache`) — the ~13 GB gpt-oss-20b weights are NOT re-downloaded.
 
 # Open WebUI (optional chat UI) is intentionally NOT defined here. It runs as
 # its own Compose project so it can be deployed and updated independently of the
-# inference engine. See docker-compose.openwebui.yml and the README's
+# inference engine. See open_web_ui/compose.yaml and the README's
 # "Running Open WebUI (optional)" section.
 
 volumes:
