@@ -45,17 +45,22 @@ services:
     # NOTE: gpu-memory-utilization sizes weights + the KV pool, but on this XPU
     # build it does NOT cap torch.compile/Inductor kernel + workspace buffers,
     # which grow as new request shapes get compiled. At 0.86 the card filled to
-    # 22.67/22.71 GiB (0.04 free) -> OOM-on-the-edge, instability and 504s. So
-    # 0.75 util (~17 GiB: ~13.7 weights + ~3.3 GiB KV pool) leaves ~2.5 GiB real
-    # headroom for that uncapped compile growth. (The 0.86-OOM figure was measured
-    # on 0.17.0-xpu; 0.75 was re-validated on 0.21.0 compiled — clean boot, KV pool
-    # ~3.96 GiB, no OOM — so the ceiling carries over unchanged.)
-    # max-model-len 65536 (64k): the model is natively 128k (YaRN,
-    # max_position_embeddings=131072), but 64k is ample for chat and keeps the
-    # reserved pool + activation buffers small. gpt-oss's alternating
-    # sliding-window(128) + full-attention layers halve per-request KV cost, so
-    # the ~3.3 GiB pool fits 64k with concurrency to spare. To go bigger later,
-    # raise max-model-len AND re-check real VRAM headroom -- do NOT just bump util.
+    # 22.67/22.71 GiB (0.04 free) -> OOM-on-the-edge, instability and 504s
+    # (measured on 0.17.0-xpu) -- treat 0.86 as a hard ceiling, never reach it.
+    # 0.80 util fills the card now that the desktop is OFF the B60 (displays are
+    # driven by the AMD iGPU): no compositor competing for VRAM, and if the engine
+    # ever OOMs it just restarts the container instead of freezing the machine.
+    # The prior display-shared default was 0.75 (KV pool ~3.96 GiB / 179,589
+    # tokens). The uncapped compile buffers remain the real risk, not the KV pool,
+    # so stay clear of 0.86 and re-check real VRAM after any change.
+    # max-model-len 131072 (128k): the model's native max (YaRN,
+    # max_position_embeddings=131072). It fits comfortably because (a) gpt-oss's
+    # alternating sliding-window(128) + full-attention layers halve per-request KV
+    # cost, and (b) vLLM V1 chunked prefill bounds activation + compile buffers by
+    # chunk size, not context length, so raising 64k->128k barely moves the
+    # footprint. Measured at 0.75/64k the pool held 179,589 tokens = 2.74x, i.e.
+    # 1.37x a single 128k request -- so 128k is served even before the util bump;
+    # 0.80 just widens the pool for prefix-cache headroom across multi-turn chat.
     # gpt-oss is reasoning-native (harmony format); the openai_gptoss parser
     # exposes the analysis channel as message.reasoning for clients like Open WebUI.
     # --- .env overrides --------------------------------------------------------
@@ -72,8 +77,8 @@ services:
       vllm serve ${VLLM_MODEL:-openai/gpt-oss-20b}
         --host 0.0.0.0
         --port 8000
-        --max-model-len ${VLLM_MAX_MODEL_LEN:-65536}
-        --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.75}
+        --max-model-len ${VLLM_MAX_MODEL_LEN:-131072}
+        --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.80}
         --reasoning-parser ${VLLM_REASONING_PARSER:-openai_gptoss}
         --enable-auto-tool-choice
         --tool-call-parser ${VLLM_TOOL_CALL_PARSER:-openai}

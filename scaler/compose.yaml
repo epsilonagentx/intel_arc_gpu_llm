@@ -34,6 +34,14 @@ name: llm
 # single-stream. COMPILED MODE TESTED & REJECTED: dropping --enforce-eager makes
 # the engine emit EMPTY content+reasoning for gpt-oss-20b (see BOOT MODE note),
 # so eager is MANDATORY here, not just a safe default.
+# 2026-07-08: max-model-len 65536 -> 131072 (128k) and util 0.75 -> 0.80, to
+# mirror the base engine's new long-context profile (validated there: 128k fits
+# with a 221k-token pool at 0.80). Boot-tested on the scaler same day: clean
+# boot + correct serving at 128k/0.80. The exact boot-log concurrency figure
+# ("Maximum concurrency for 131,072 tokens per request", want >= 1.0x) was not
+# captured, so read it off the next boot for the record — this fork's OLDER
+# vLLM base may size the KV pool differently than the stock 0.21.0 V1 engine.
+# Eager removes the compile-buffer OOM risk, so 0.80 is comfortable.
 # ============================================================================
 
 services:
@@ -79,11 +87,12 @@ services:
     # correctness failure, no crash/NaN in logs). Inductor's compiled graph is
     # broken for this MXFP4 MoE on XPU here; the fork's own custom kernels only
     # produce valid output in eager. So keep --enforce-eager: it disables
-    # torch.compile (no compile-buffer growth, so util isn't constrained by
-    # Inductor buffers — 0.85 would be safe, but we keep 0.75 to match the base
-    # vLLM engine) and is the ONLY mode that generates real text. Measured
-    # ~80 tok/s single-stream = the
-    # scaler's real number (NOT an under-statement — compiled is not an option).
+    # torch.compile (no compile-buffer growth, so util is NOT constrained by
+    # Inductor buffers here — 0.85 would be safe; we use 0.80 to match the base
+    # vLLM engine, raised from 0.75 on 2026-07-08 once the B60 stopped driving
+    # displays) and is the ONLY mode that generates real text. Measured ~80 tok/s
+    # single-stream = the scaler's real number (NOT an under-statement — compiled
+    # is not an option).
     #
     # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
     # The --reasoning-parser/--tool-call-parser flag names are inherited from
@@ -96,8 +105,8 @@ services:
         vllm serve openai/gpt-oss-20b \
           --host 0.0.0.0 \
           --port 8000 \
-          --max-model-len 65536 \
-          --gpu-memory-utilization 0.75 \
+          --max-model-len 131072 \
+          --gpu-memory-utilization 0.80 \
           --enforce-eager \
           --reasoning-parser openai_gptoss \
           --enable-auto-tool-choice \
