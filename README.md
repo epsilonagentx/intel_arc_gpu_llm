@@ -379,16 +379,18 @@ docker compose -f vllm_xpu/compose.yaml up -d
 
 Why you might switch: the `llm-scaler` fork is tuned for Arc B-series and its
 image unlocks quantised-MoE paths that the stock image doesn't (e.g.
-`Qwen3-30B-A3B-GPTQ-Int4`). Benchmark it against the stock engine before adopting
-it in prod — the stock image has since jumped `0.17`→`0.21`, so the fork is no
-longer strictly newer, and the win (if any) has to be measured, not assumed.
+`Qwen3-30B-A3B-GPTQ-Int4`, and the gemma-4 family since `0.21.0-b1`). Benchmark it
+against the stock engine before adopting it in prod — the win (if any) has to be
+measured, not assumed. Both engines now run the same vLLM 0.21.0 base, so the
+measurement finally compares the fork's optimisations rather than two engine
+versions.
 
-The scaler config boots with `--enforce-eager` (safe first boot, but slower — so
-it under-states the engine's real speed). Dropping eager for the true number,
-plus the VRAM re-tune it then needs, is covered in [DEVELOPER.md](DEVELOPER.md).
-The fork inherits upstream's parser flag names but that's unverified here, so run
-`./smoke.sh` to confirm the reasoning channel and tool-calling work before
-trusting it in prod.
+The scaler config boots with `--enforce-eager` and **must stay that way** for
+gpt-oss-20b: compiled mode was tested and returns empty output (a silent
+correctness failure), so the eager number is the engine's real speed, not an
+under-statement — details in [DEVELOPER.md](DEVELOPER.md). The fork inherits
+upstream's parser flag names but that's unverified here, so run `./smoke.sh` to
+confirm the reasoning channel and tool-calling work before trusting it in prod.
 
 ---
 

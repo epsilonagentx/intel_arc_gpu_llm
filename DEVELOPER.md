@@ -125,8 +125,9 @@ fork). The operator swap/run procedure is in the README.
 faster than the stock image. The single-stream decode baseline of **~60 tok/s**
 on the B60 (via `bench.sh`) was measured on `0.17.0-xpu`; re-baseline on the
 current `0.21.0-ubuntu24.04` stock image before comparing — that's the yardstick.
-Note the stock image has since jumped `0.17`→`0.21`, so the fork (built on an
-older vLLM base) is no longer strictly newer than what it's being compared to.
+Both engines now sit on the **same vLLM 0.21.0 base** (the fork reached it in
+`0.21.0-b1`), so for the first time the comparison isolates the fork's own
+Arc-specific work rather than an engine-version gap.
 
 **Why two folders, not a compose profile:** one GPU (~22.7 GiB) and gpt-oss-20b
 needs ~17 GiB, so the two engines can't coexist (~31 GiB = OOM). A separate
@@ -134,21 +135,31 @@ folder per engine means every `up` must target an engine's folder (cd into it,
 or `-f` its `compose.yaml`), so you can't start both by accident and "which
 engine is prod" is always explicit.
 
-**Image:** pinned to `intel/llm-scaler-vllm:0.14.0-b8.3.2` (the current build;
-the fork's docs warn against `:latest`). b8.3.2 vs the prior b8.3.1 is only a
-Qwen3.5/3.6-27B accuracy fix — no gpt-oss-20b impact — but it's the right base
-for a first benchmark.
+**Image:** pinned to `intel/llm-scaler-vllm:0.21.0-b3` (the fork's own "Latest
+Release", 2026-08-10; its docs warn against `:latest`). Upgraded from
+`0.14.0-b8.3.2` on 2026-08-12 — **not yet boot-tested**, see the checklist in
+`scaler/compose.yaml`. The jump is the vLLM *base*, not a patch level: `b1` moved
+the fork from vLLM 0.14.0 to 0.21.0, `b2` added FP8 per-block quant / MTP / LoRA
+serving for Qwen3.6 and gemma-4, `b3` added Muse-Glimmer-30B and gemma-4 TTFT
+work. **No release in that line touches gpt-oss**, so any change in gpt-oss-20b
+behaviour comes from the newer base, not the fork's own commits. `0.21.0-b1` is
+skipped on purpose: `b2`'s notes say it "removed internal proxy information".
+Because the image changed, clear the `llm_vllm-scaler-cache` volume once before
+first boot (same practice as `vllm_xpu`'s `vllm-cache`).
 
-**`--enforce-eager` caveat:** the staged config boots with `--enforce-eager`,
-which (a) disables torch.compile — removing the uncapped Inductor buffer growth
-that forced 0.75 util on the stock image, so a higher util would be safe here
-(we keep 0.75 to match the base vLLM engine) — and (b) gives a clean first
-boot. **But eager mode is slower than compiled**, so it
-under-states the scaler's real speed. Once it boots clean, drop
-`--enforce-eager` and re-bench for the true number (watch VRAM; back off util if
-it edges toward OOM). gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass
-`--quantization`. The fork inherits upstream's parser flag names; if it renamed
-them the server fails fast at startup with a clear arg error.
+**`--enforce-eager` is mandatory, not a safe default:** the config boots with
+`--enforce-eager`, which disables torch.compile — removing the uncapped Inductor
+buffer growth that constrains util on the stock image, so a higher util would be
+safe here (we keep 0.80 to match the base vLLM engine). Eager is normally slower
+than compiled, **but compiled mode was tested on 2026-07-03 and rejected**:
+without `--enforce-eager` the engine boots and compiles fine, then returns empty
+`content` *and* `reasoning` for gpt-oss-20b — a silent correctness failure with no
+crash in the logs. So the eager figure is the fork's real number, not an
+under-statement. `0.21.0-b1` adds experimental XPU graph support which *might*
+change this; treat re-testing it as a deliberate, correctness-verified experiment.
+gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass `--quantization`. The fork
+inherits upstream's parser flag names; if it renamed them the server fails fast at
+startup with a clear arg error.
 
 ---
 

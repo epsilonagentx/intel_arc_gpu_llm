@@ -30,75 +30,242 @@ name: llm
 #     docker compose -f vllm_xpu/compose.yaml up -d
 #   Logs:  docker compose -f scaler/compose.yaml logs -f
 #
-# STATUS (2026-07-03): eager validated — clean boot, correctness passes, ~80 tok/s
-# single-stream. COMPILED MODE TESTED & REJECTED: dropping --enforce-eager makes
-# the engine emit EMPTY content+reasoning for gpt-oss-20b (see BOOT MODE note),
-# so eager is MANDATORY here, not just a safe default.
+# STATUS (2026-07-03, measured on the OLD 0.14.0-b8.3.2 image): eager validated
+# — clean boot, correctness passes, ~80 tok/s single-stream. COMPILED MODE TESTED
+# & REJECTED: dropping --enforce-eager makes the engine emit EMPTY
+# content+reasoning for gpt-oss-20b (see BOOT MODE note), so eager is MANDATORY
+# here, not just a safe default.
 # 2026-07-08: max-model-len 65536 -> 131072 (128k) and util 0.75 -> 0.80, to
 # mirror the base engine's new long-context profile (validated there: 128k fits
 # with a 221k-token pool at 0.80). Boot-tested on the scaler same day: clean
-# boot + correct serving at 128k/0.80. The exact boot-log concurrency figure
-# ("Maximum concurrency for 131,072 tokens per request", want >= 1.0x) was not
-# captured, so read it off the next boot for the record — this fork's OLDER
-# vLLM base may size the KV pool differently than the stock 0.21.0 V1 engine.
+# boot + correct serving at 128k/0.80.
+#
+# 2026-08-12 IMAGE UPGRADE 0.14.0-b8.3.2 -> 0.21.0-b3 — BOOT-TESTED & VALIDATED
+# with gpt-oss-20b at 128k/0.80 eager on the B60 (1 XPU enumerated: "Intel(R)
+# Arc(TM) Pro B60 Graphics", 23.9 GiB):
+#   Model loading took 12.87 GiB / 7.68 s
+#   Available KV cache memory: 5.46 GiB
+#   GPU KV cache size: 234,645 tokens
+#   Maximum concurrency for 131,072 tokens per request: 1.79x   <-- FINALLY CAPTURED
+#     (the base 0.21.0 engine reports a 221k pool / 1.69x, so this fork sizes the
+#      KV pool slightly LARGER on the same vLLM base, not differently-worse)
+#   ./smoke.sh: ALL PASS — served name, non-empty content, message.reasoning
+#     populated (835 chars), get_weather tool_call emitted. So the inherited
+#     --reasoning-parser/--tool-call-parser flag names are correct on this image.
+#   ./bench.sh: ~72 tok/s steady (72.1 / 72.1 / 71.1 over 3 warm runs), TTFT
+#     ~81-92 ms. NOTE the FIRST request after startup measured only 57.5 tok/s —
+#     warm-up, not the real number. Always discard run 1 when benching this.
+# !! THROUGHPUT REGRESSION: ~72 tok/s here vs the ~80 tok/s recorded on
+# 0.14.0-b8.3.2, i.e. roughly 10% slower for gpt-oss-20b. Caveat: the ~80 was
+# taken at 64k/0.75, this at 128k/0.80, so the two aren't perfectly matched.
+# Weigh that against what the upgrade buys (same vLLM base as the stock engine =
+# meaningful A/B at last, bigger KV pool, newer base) before deciding to keep it.
+# STILL OPEN: bench the stock 0.21.0 engine to complete the real apples-to-apples
+# comparison — that was the original point of keeping both folders.
+#
+# (Superseded note: this block previously said NOT YET BOOT-TESTED.)
+# The fork's vLLM base jumped 0.14.0 -> 0.21.0 (in 0.21.0-b1), so every number
+# above is from a different engine and must be re-measured. On the next boot:
+#   1. Confirm it boots at all with the new device mapping (see `devices:`).
+#   2. Read off "Maximum concurrency for 131,072 tokens per request" (want
+#      >= 1.0x) — still never captured, and the new base sizes the KV pool like
+#      the stock 0.21.0 V1 engine now, so this may finally match vllm_xpu.
+#   3. Re-run ./bench.sh (the ~80 tok/s figure is stale) and ./smoke.sh
+#      (reasoning channel + tool-calling — parser flag names are re-inherited
+#      from a NEWER upstream, so a rename would surface here as a startup error).
+#   4. Keep --enforce-eager. 0.21.0-b1 adds "experimental XPU graph" support,
+#      which MIGHT fix the empty-output bug — but that is a separate, explicitly
+#      correctness-verified experiment, not a default to flip blind.
 # Eager removes the compile-buffer OOM risk, so 0.80 is comfortable.
+#
+# !! 2026-08-12 ALSO IN FLIGHT: this service is currently pointed at
+# gemma-4-26B-A4B-it, NOT gpt-oss-20b — the whole reason for taking the 0.21.0
+# upgrade is that it added gemma-4 support. See the CURRENT MODEL block by
+# `command:` for the INT4-vs-FP8 VRAM reasoning and the flag provenance. Both
+# changes (image + model) are UNTESTED and land together, so if boot fails,
+# bisect: put the gpt-oss command back first to prove the image is sound, THEN
+# retry gemma-4. Everything here is uncommitted on branch
+# feature/scaler-0.21.0-b3 — `git checkout -- scaler/compose.yaml` reverts.
 # ============================================================================
 
 services:
   vllm-scaler:
-    # Pin an exact beta — llm-scaler docs say do NOT use :latest. b8.3.2 (2026-06-26)
-    # is the newest in the b8.3.x line and what `latest` points to; b8.3.2 vs the
-    # prior b8.3.1 is only a Qwen3.5/3.6-27B accuracy fix (no gpt-oss-20b impact),
-    # but pinning the current maintainer build is the right base for a first bench.
-    image: intel/llm-scaler-vllm:0.14.0-b8.3.2
+    # Pin an exact beta — llm-scaler docs say do NOT use :latest. 0.21.0-b3
+    # (2026-08-10) is the fork's own "Latest Release" and what `latest` currently
+    # points to. NOTE the version jump is the vLLM BASE, not just a patch level:
+    # 0.21.0-b1 upgraded the fork from vLLM 0.14.0 to 0.21.0 — the same base the
+    # stock vllm_xpu image runs. That is the reason to take this upgrade: it makes
+    # base-vs-scaler an apples-to-apples comparison (the whole point of this
+    # folder), instead of a comparison confounded by a two-version engine gap.
+    # NONE of b1/b2/b3 contains a gpt-oss fix — the release notes are all
+    # Qwen3.6 / gemma-4 / Muse-Glimmer / diffusiongemma work — so expect no
+    # gpt-oss-20b win from the fork's own changes, only whatever the newer base
+    # brings. gpt-oss-20b/120b remain in the fork's supported-models table
+    # (MXFP4 column), so support is retained. Skipping 0.21.0-b1 deliberately:
+    # b2's notes say it "removed internal proxy information", implying b1 shipped
+    # with Intel-internal proxy config baked into the image.
+    image: intel/llm-scaler-vllm:0.21.0-b3
     container_name: vllm-scaler
     restart: unless-stopped
-    # Narrow device mapping per llm-scaler docs (this fork is on an older vLLM
-    # base that booted with just these nodes). If boot dies on oneCCL
-    # ze_fd_manager / by-path enumeration (as the 0.21.0 base image does), switch
-    # to the whole-/dev/dri + `/dev/dri/by-path:ro` volume combo from
-    # vllm_xpu/compose.yaml.
+    # Whole-/dev/dri mapping + the by-path bind below, matching
+    # vllm_xpu/compose.yaml. The old narrow renderD128 + card1 mapping worked only
+    # because this fork sat on an OLDER vLLM base; now that it is on the same
+    # 0.21.0 base as the stock image, expect the same oneCCL requirement — that
+    # base enumerates /dev/dri/by-path for its warm-up all_reduce and dies with
+    # "oneCCL: ze_fd_manager.cpp:144 ... opendir failed" without it, and Docker's
+    # `devices:` never recreates that symlink dir. The AMD iGPU nodes this also
+    # exposes are harmless (not SYCL XPUs).
     devices:
-      - /dev/dri/renderD128:/dev/dri/renderD128
-      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri:/dev/dri
     group_add:
       - "992"   # host 'render' GID
       - "44"    # host 'video' GID
     ipc: host
     shm_size: "32g"          # llm-scaler docs recommend 32g
     volumes:
-      - hf-cache:/root/.cache/huggingface      # SHARED with base vLLM — reuse cached gpt-oss-20b weights, NO re-download
-      - vllm-scaler-cache:/root/.cache/vllm    # SEPARATE compile cache (kernels are image-version-specific)
+      - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration (see devices: above)
+      # SHARED with base vLLM — gpt-oss-20b's ~13 GB is reused, NOT re-downloaded.
+      # NOTE the gemma-4 experiment adds ~52 GB of BF16 weights to this same
+      # volume (online quant needs the full-precision checkpoint). 574 GB free on
+      # / as of 2026-08-12, so there is room; `docker volume rm llm_hf-cache`
+      # would ALSO delete the gpt-oss weights, so prune selectively if reclaiming.
+      - hf-cache:/root/.cache/huggingface
+      # SEPARATE compile cache (kernels are image-version-specific). This image
+      # changed on 2026-08-12, so clear this volume ONCE before the first boot of
+      # 0.21.0-b3 — from this folder: `docker compose down`, then
+      # `docker volume rm llm_vllm-scaler-cache`. (Same validated path as
+      # vllm_xpu's vllm-cache on an image upgrade. Running eager means little is
+      # cached here anyway, but stale kernels from a different vLLM base are not
+      # worth debugging.)
+      - vllm-scaler-cache:/root/.cache/vllm
     environment:
       HF_HOME: /root/.cache/huggingface
       ZES_ENABLE_SYSMAN: "1"
       SYCL_CACHE_PERSISTENT: "1"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"     # per llm-scaler docs
       no_proxy: "localhost,127.0.0.1"
+      # --- gemma-4 / online-quantisation knobs (all four per llm-scaler docs) ---
+      # REQUIRED for --quantization sym_int4: the fork's INT4 kernels live in this
+      # .so and are NOT picked up without the env var.
+      # !! The path in Intel's README (/usr/local/lib/python3.12/dist-packages/...)
+      # is STALE for 0.21.0-b3 and fails with "cannot open shared object file"
+      # (verified 2026-08-12 — the engine crash-loops on it). This image moved
+      # everything into a venv at /opt/venv, which is likely why it shrank from
+      # ~13 GB to ~5 GB. Path below confirmed by `find` inside the image; re-check
+      # it on any future image bump.
+      VLLM_QUANTIZE_Q40_LIB: "/opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so"
+      # Quantise layer-by-layer with weights staged off-device. Online quant loads
+      # a full-precision checkpoint (~52 GB BF16 for 26B) and shrinks it at
+      # runtime; without this the load peaks far above what the B60 can hold.
+      VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT: "1"
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+      # VERIFIED 2026-08-12 via the HF API: google/gemma-4-26B-A4B-it is
+      # apache-2.0, `gated: false`, `private: false` — NO token needed (unlike
+      # gemma 2/3, which were gated). Passthrough kept anyway so a future gated
+      # model works by just exporting HF_TOKEN; value-only wiring means the file
+      # carries no secret and empty = anonymous.
+      HF_TOKEN: "${HF_TOKEN:-}"
     ports:
       - "8000:8000"          # SAME port as base vLLM (only one runs at a time) so downstream is unchanged
     # The llm-scaler image's default entrypoint drops to a shell, so invoke
     # `vllm serve` explicitly via bash -lc (single-element list = one argv string).
     #
     # BOOT MODE — EAGER, and it MUST stay eager for gpt-oss-20b on this fork.
-    # TESTED 2026-07-03: dropping --enforce-eager (torch.compile ON) boots and
+    # TESTED 2026-07-03 on 0.14.0-b8.3.2: dropping --enforce-eager (torch.compile ON) boots and
     # compiles fine (~80 s) but then generates EMPTY output — completion_tokens
     # increment yet BOTH `content` and `reasoning` come back null/blank (silent
     # correctness failure, no crash/NaN in logs). Inductor's compiled graph is
     # broken for this MXFP4 MoE on XPU here; the fork's own custom kernels only
-    # produce valid output in eager. So keep --enforce-eager: it disables
+    # produce valid output in eager (0.21.0-b1's "experimental XPU graph" may or
+    # may not change this — re-test explicitly, don't assume). So keep
+    # --enforce-eager: it disables
     # torch.compile (no compile-buffer growth, so util is NOT constrained by
     # Inductor buffers here — 0.85 would be safe; we use 0.80 to match the base
     # vLLM engine, raised from 0.75 on 2026-07-08 once the B60 stopped driving
-    # displays) and is the ONLY mode that generates real text. Measured ~80 tok/s
-    # single-stream = the scaler's real number (NOT an under-statement — compiled
-    # is not an option).
+    # displays) and is the ONLY mode that generates real text. The ~80 tok/s
+    # single-stream measured on the old image was the scaler's real number for
+    # that build (NOT an under-statement — compiled is not an option); re-bench on
+    # 0.21.0-b3 before quoting a figure for this one.
     #
     # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
     # The --reasoning-parser/--tool-call-parser flag names are inherited from
     # upstream vLLM; if this fork renamed them the server fails fast at startup
     # with a clear arg error — adjust then. Verify the reasoning channel AND
     # tool-calling actually work here before trusting this engine in prod.
+    #
+    # ============ gemma-4-26B-A4B-it ON B60: TESTED 2026-08-12, BLOCKED =========
+    # Tried on 0.21.0-b3 because b1 "added gemma-4 support". It does NOT run on a
+    # single B60. Final error, reached with BOTH --quantization gptq and
+    # --quantization moe_wna16 against a fully-int4 checkpoint:
+    #   NotImplementedError: No Unquantized MoE backend supports the deployment
+    #   configuration.
+    # Raised inside model_loader/utils.py initialize_model — i.e. at model
+    # CONSTRUCTION, before a single weight is read. The Gemma4 MoE module is built
+    # UNQUANTISED whatever --quantization says, then asks for an XPU backend for an
+    # unquantised fused-MoE and there is none. So this is not a flag-tuning
+    # problem and no --quantization value fixes it: it is the MoE-on-XPU
+    # quantisation wall, still standing in 0.21.0-b3.
+    # => Read the release notes' "gemma-4 support" as the DENSE variants
+    #    (12B-it, 31B-it). Note Intel publishes reference commands only for
+    #    gemma-4-12B-it (TP=1) and diffusiongemma-26B-A4B-it (TP=2) — never for
+    #    gemma-4-26B-A4B-it. That omission now looks deliberate.
+    # => gemma-4-12B-it is the plausible single-B60 path (dense, TP=1 in Intel's
+    #    own recipe). Untested here.
+    #
+    # Checkpoint findings worth keeping (the checkpoint was never the problem):
+    #  * Intel/gemma-4-26B-A4B-it-int4-AutoRound IS fully int4 — 11,520 expert
+    #    qweight tensors, ZERO unquantised expert weights, 8 shards, 15.4 GB,
+    #    largest shard 2.1 GB. Intel-published. Verified via the HF index.json.
+    #  * Its quant_method is "auto-round", which this image's registry does NOT
+    #    contain — but packing_format is "auto_round:auto_gptq", so the tensors
+    #    are in GPTQ layout and gptq/moe_wna16 both accept them. The label is the
+    #    only mismatch; loading was never what failed.
+    #  * google/gemma-4-26B-A4B-it is ungated (gated:false, apache-2.0) — no
+    #    HF_TOKEN needed, unlike gemma 2/3.
+    #
+    # HOST-RAM CEILING (separate, and it bites any online-quant model):
+    # Intel's documented route (--quantization sym_int4 on Google's original)
+    # fails here before touching the GPU:
+    #   RuntimeError: unable to mmap 49907246508 bytes ... Cannot allocate memory
+    # Google ships that checkpoint as ONE 49.9 GB shard; online quantisation must
+    # open the full-precision file, and with 30 GiB RAM + 8 GiB swap under
+    # vm.overcommit_memory=0 the kernel refuses a single 49.9 GB mapping outright.
+    # ONLINE QUANTISATION ON THIS BOX IS CAPPED BY HOST RAM, NOT VRAM — check the
+    # largest shard size before reaching for util/context knobs. Workarounds if
+    # ever needed: vm.overcommit_memory=1, or ~32 GB more swap, or (best) a
+    # pre-quantised, normally-sharded checkpoint.
+    # ===========================================================================
+    # ====== KV CACHE DTYPE: fp8 — TESTED 2026-08-21, THEN REVERTED =============
+    # Kept as a record, same convention as the compiled-mode and gemma-4 blocks
+    # above. `--kv-cache-dtype fp8` was added, boot-tested on the B60, then
+    # removed again by decision. It WORKED and cost nothing measurable:
+    #   GPU KV cache size 234,645 -> 469,354 tokens (exactly 2.0x)
+    #   Max concurrency @131,072 tokens/req  1.79x -> 3.58x
+    #   ./bench.sh 72.0 tok/s — same as without it; ./smoke.sh ALL PASS;
+    #   FlashAttention retained (no silent Triton fallback)
+    # It was removed because it did NOT touch the ~10% decode regression, which
+    # was what we were chasing — it buys concurrency, not speed. Re-add the single
+    # flag if long-context concurrency ever becomes the binding constraint, but
+    # validate on a REAL long prompt first: vLLM warns fp8 KV "may cause accuracy
+    # drop without a proper scaling factor" (cache.py:261) and smoke.sh's four
+    # shallow checks do not clear that.
+    #
+    # Also SETTLED by the same audit, so nobody re-treads it:
+    #  * There is NO `--flash-attn` flag in vLLM (that is llama.cpp's `-fa`).
+    #    `platforms/xpu.py` ALREADY selects FLASH_ATTN (FlashAttention 2, KV block
+    #    size 64, NHD layout) with no flag from us; the only other non-MLA option
+    #    is TRITON_ATTN, which that file itself calls the old fallback (FA2
+    #    measured ~19% faster decode TPOT than Triton on B-series). Nothing to win.
+    #  * `--kv-cache-dtype turboquant_*` (k8v4 / 4bit_nc / k3v4_nc / 3bit_nc) is
+    #    RULED OUT: routes to a separate TURBOQUANT backend and costs 20-60%
+    #    throughput per vLLM's own study, for capacity we do not need.
+    #
+    # BENCH HYGIENE (this bit us): bench.sh reports total_CHUNKS / decode_time, so
+    # a longer budget scores LOWER on the same engine — 72.0 @200 tok vs 70.6 @400.
+    # ALWAYS compare at equal max_tokens. The b8.3.2 ~80.8 was `./bench.sh 400`, so
+    # the matched-budget regression is 80.8 -> 70.6 = ~12.6%, not the ~10% quoted
+    # elsewhere in this file.
+    # ===========================================================================
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - |
@@ -112,12 +279,31 @@ services:
           --enable-auto-tool-choice \
           --tool-call-parser openai \
           --served-model-name gpt-oss-20b
+    # --- The blocked gemma-4 attempt, kept for the record (see notes above) ---
+    # command:
+    #   - |
+    #     vllm serve Intel/gemma-4-26B-A4B-it-int4-AutoRound \
+    #       --host 0.0.0.0 \
+    #       --port 8000 \
+    #       --max-model-len 32768 \
+    #       --gpu-memory-utilization 0.80 \
+    #       --quantization moe_wna16 \
+    #       --dtype float16 \
+    #       --mamba-ssm-cache-dtype float16 \
+    #       --block-size 64 \
+    #       --max-num-batched-tokens 8192 \
+    #       --trust-remote-code \
+    #       --served-model-name gemma-4-26B-A4B-it
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 30s
       timeout: 5s
       retries: 60
-      start_period: 1800s
+      # 1800s covered gpt-oss's silent XPU cold start. gemma-4 also has to DOWNLOAD
+      # ~52 GB of BF16 weights and then online-quantise them to INT4 before it
+      # serves, so the first boot is far longer — 2h keeps Docker from marking the
+      # container unhealthy mid-quantisation. Drop it back to 1800s for gpt-oss.
+      start_period: 7200s
 
 volumes:
   hf-cache:              # shared with vllm_xpu/compose.yaml (project `llm`)
