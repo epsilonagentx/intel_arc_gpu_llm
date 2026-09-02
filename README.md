@@ -11,9 +11,11 @@ scripts (`watt.sh`, the troubleshooting `/proc` reads) are Linux-specific.
 Default engine container: `intel/vllm:0.21.0-ubuntu24.04` (an `llm-scaler`
 alternative is also provided — see *Choosing the inference engine* below). This
 is the **how-to** for running and operating the stack. The *why* behind the
-config (VRAM sizing, the 0.75-util decision, quantisation choices) is in
-[DEVELOPER.md](DEVELOPER.md); a configuration overview is in
-[INTEL_ARC_B60.md](INTEL_ARC_B60.md).
+config (VRAM sizing, the util decision, quantisation choices) is in
+[DEVELOPER.md](DEVELOPER.md); measurements and the record of what has already
+been tried and rejected on the scaler engine are in
+[SCALER_NOTES.md](SCALER_NOTES.md); a configuration overview is
+in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 The stack runs one vLLM engine (port 8000, LAN-exposed) serving `gpt-oss-20b`,
 from one of two **interchangeable** engine images — stock `intel/vllm` or
@@ -379,18 +381,24 @@ docker compose -f vllm_xpu/compose.yaml up -d
 
 Why you might switch: the `llm-scaler` fork is tuned for Arc B-series and its
 image unlocks quantised-MoE paths that the stock image doesn't (e.g.
-`Qwen3-30B-A3B-GPTQ-Int4`, and the gemma-4 family since `0.21.0-b1`). Benchmark it
-against the stock engine before adopting it in prod — the win (if any) has to be
-measured, not assumed. Both engines now run the same vLLM 0.21.0 base, so the
-measurement finally compares the fork's optimisations rather than two engine
-versions.
+`Qwen3-30B-A3B-GPTQ-Int4`, and the gemma-4 family since `0.21.0-b1`), and on this
+hardware it is currently also the **faster** of the two for gpt-oss-20b:
+`0.26.0-b1` measures **85.6 tok/s** single-stream on `./bench.sh 400` with ~73 ms
+TTFT, the best figure recorded here. Still benchmark before adopting — the win
+has to be measured on your own box, and note the two engines sit on **different
+vLLM bases** (scaler `0.26.0-b1` → vLLM 0.26.0, stock → 0.21.0), so a difference
+mixes the fork's optimisations with an engine-version gap. Compare at equal
+`max_tokens` and discard the first run after a cold start, or the numbers lie;
+[SCALER_NOTES.md](SCALER_NOTES.md) has the full image-by-image table and the
+hygiene rules.
 
 The scaler config boots with `--enforce-eager` and **must stay that way** for
 gpt-oss-20b: compiled mode was tested and returns empty output (a silent
 correctness failure), so the eager number is the engine's real speed, not an
 under-statement — details in [DEVELOPER.md](DEVELOPER.md). The fork inherits
-upstream's parser flag names but that's unverified here, so run `./smoke.sh` to
-confirm the reasoning channel and tool-calling work before trusting it in prod.
+upstream's parser flag names; those pass `./smoke.sh` on the current pin, but
+re-run it after any image bump to confirm the reasoning channel and tool-calling
+still work before trusting the engine in prod.
 
 ---
 
