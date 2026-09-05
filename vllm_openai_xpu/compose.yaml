@@ -1,0 +1,80 @@
+# UPSTREAM vLLM XPU engine — vllm/vllm-openai-xpu (not Intel's fork).
+#
+# Drop-in replacement for the `vllm` service in vllm_xpu/compose.yaml and the
+# `vllm-scaler` service in scaler/compose.yaml: same model, same :8000.
+#
+# !! SINGLE GPU — run EXACTLY ONE of the three engines at a time.
+# !! UNVALIDATED on this B60 as of 2026-09-04. `restart: "no"` on purpose.
+# Rationale, verified upstream facts, what to measure:  ../UPSTREAM_VLLM_NOTES.md
+name: llm   # SAME project as vllm_xpu/scaler ON PURPOSE — shares the hf-cache volume
+
+services:
+  vllm-openai-xpu:
+    # Upstream's own XPU image, separate Docker Hub repo from the CUDA one.
+    # Here `latest` DOES track newest stable (unlike the Intel images).
+    image: vllm/vllm-openai-xpu:v0.28.0
+    container_name: vllm-openai-xpu
+    restart: "no"            # unvalidated engine — do not let it fight for the GPU
+    # Whole /dev/dri + the by-path bind below are BOTH required, even at
+    # world_size=1. This is upstream's documented recipe, not a local workaround.
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992"   # host 'render' GID
+      - "44"    # host 'video' GID
+    ipc: host
+    shm_size: "16g"
+    volumes:
+      - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration
+      - hf-cache:/root/.cache/huggingface      # shared with vllm_xpu/ + scaler/ — weights not re-downloaded
+      # Compile cache — kernels are image-specific, so this engine gets its own.
+      # Clear once after any image bump:
+      #   docker compose down && docker volume rm llm_vllm-openai-cache
+      - vllm-openai-cache:/root/.cache/vllm
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      ZES_ENABLE_SYSMAN: "1"
+      SYCL_CACHE_PERSISTENT: "1"
+      VLLM_WORKER_MULTIPROC_METHOD: "spawn"    # platform auto-sets this; explicit for parity
+      no_proxy: "localhost,127.0.0.1"
+      # Graph mode is single-GPU-only upstream and defaults OFF. Flipping this to
+      # 1 is the one speed lever this engine adds. ../UPSTREAM_VLLM_NOTES.md §3
+      VLLM_XPU_ENABLE_XPU_GRAPH: "${VLLM_XPU_ENABLE_XPU_GRAPH:-0}"
+      HF_TOKEN: "${HF_TOKEN:-}"                # empty = anonymous; no secret in this file
+    ports:
+      - "8000:8000"          # same port as the other engines (only one runs at a time)
+    # ENTRYPOINT is ["vllm","serve"], so command is ARGS ONLY — no shell wrapper
+    # and no `vllm serve` prefix (this differs from scaler/compose.yaml).
+    # !! --enforce-eager IS REQUIRED, and NOT for the scaler's reason. Upstream
+    # defaults cudagraph_mode to NONE but STILL runs torch.compile/Inductor
+    # (CompilationMode.VLLM_COMPILE). Those buffers are not capped by
+    # gpu-memory-utilization, so at 128k they starved the KV pool to 2.89 GiB and
+    # boot died needing 3.1 GiB. Eager restores it to ~4.3 GiB. ../UPSTREAM_VLLM_NOTES.md §3
+    command:
+      - "${VLLM_MODEL:-openai/gpt-oss-20b}"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--max-model-len=${VLLM_MAX_MODEL_LEN:-131072}"
+      - "--gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
+      - "--enforce-eager"
+      # UNDER TEST 2026-09-04. util 0.80 caps the engine at 18.17 GiB of a 22.71 GiB
+      # card, stranding ~4.5 GiB and leaving only a 3.12 GiB KV pool (1.01x @128k).
+      # This is the exact byte value the engine itself printed for "fully utilize
+      # gpu memory" -> 6.63 GiB pool. Leaves ~0.14 GiB card headroom, which is only
+      # safe because --enforce-eager means no growing compile buffers.
+      # Set VLLM_KV_CACHE_MEMORY= (empty) to fall back to util-based sizing.
+      - "--kv-cache-memory=${VLLM_KV_CACHE_MEMORY:-7117934592}"
+      - "--reasoning-parser=${VLLM_REASONING_PARSER:-openai_gptoss}"
+      - "--enable-auto-tool-choice"
+      - "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-openai}"
+      - "--served-model-name=${VLLM_SERVED_MODEL_NAME:-gpt-oss-20b}"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 60
+      start_period: 3600s    # unknown cold-start cost on this engine; weights are cached
+
+volumes:
+  hf-cache:                # shared with vllm_xpu/ and scaler/ (project `llm`)
+  vllm-openai-cache:       # compile cache for the upstream engine
