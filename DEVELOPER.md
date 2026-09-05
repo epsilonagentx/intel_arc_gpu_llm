@@ -181,9 +181,13 @@ than compiled, **but compiled mode was tested on 2026-07-03 and rejected**:
 without `--enforce-eager` the engine boots and compiles fine, then returns empty
 `content` *and* `reasoning` for gpt-oss-20b — a silent correctness failure with no
 crash in the logs. So the eager figure is the fork's real number, not an
-under-statement. The fork gained experimental XPU graph support in `0.21.0-b1`
-and now sits on a much newer base — either *might* change this; treat re-testing
-it as a deliberate, correctness-verified experiment, not a default to flip.
+under-statement. The base is five minors newer than the image that failed, so the
+verdict *might* have changed; treat re-testing it as a deliberate,
+correctness-verified experiment, not a default to flip. The fork's experimental
+XPU graph support (added in `0.21.0-b1`) has its own switch,
+`VLLM_XPU_ENABLE_XPU_GRAPH` — **tested 2026-09-03 and it is a no-op while
+`--enforce-eager` is set**, so the boot-log warning recommending it is safe to
+ignore. Measurements in [SCALER_NOTES.md](SCALER_NOTES.md) §4.
 gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass `--quantization`. The fork
 inherits upstream's parser flag names; if it renamed them the server fails fast at
 startup with a clear arg error.

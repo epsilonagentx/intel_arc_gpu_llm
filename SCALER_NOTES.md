@@ -67,7 +67,7 @@ Other upstream sources:
 | Model | `openai/gpt-oss-20b`, served as `gpt-oss-20b` |
 | Context / util | `--max-model-len 131072` (128k) / `--gpu-memory-utilization 0.80` |
 | Boot mode | `--enforce-eager` — **mandatory**, see §4 |
-| Status | Boot-tested and validated 2026-09-02 |
+| Status | Boot-tested and validated 2026-09-02; re-validated after the 2026-09-03 XPU-graph experiment (§4) — config unchanged |
 
 **Which engine owns `:8000`?** `curl -s localhost:8000/version`. The scaler
 reports `0.26.1.dev0…`; the stock `vllm_xpu` image reports `0.21.0`. Useful
@@ -137,15 +137,55 @@ b3-vs-`0.26.0-b1` comparison *is* matched on every axis.
 | Image (full tag) | Date tested | Weights | KV memory | KV pool | Max concurrency @131,072 |
 |------------------|-------------|---------|-----------|---------|--------------------------|
 | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | 12.87 GiB / 7.68 s | 5.46 GiB | 234,645 tok | 1.79× |
-| `intel/llm-scaler-vllm:0.26.0-b1` | **not captured** | — | — | — | — |
+| `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-03 | 12.87 GiB / 7.28 s | **4.33 GiB** | **183,314 tok** | **1.40×** |
 
 For context, the stock `intel/vllm:0.21.0-ubuntu24.04` engine reports a 221k pool
 / 1.69× at the same profile, so the fork sized its KV pool slightly *larger* on
 the same base. The b3 boot also confirmed 1 XPU enumerated,
 `Intel(R) Arc(TM) Pro B60 Graphics`, 23.9 GiB.
 
+The `0.26.0-b1` VRAM budget, read from its boot log (`gpu_worker.py:857`):
+
+| Item | Value |
+|------|-------|
+| Free on device at startup | 22.99 of 23.91 GiB |
+| Budget at `--gpu-memory-utilization 0.80` | 19.12 GiB |
+| Weights | 12.87 GiB |
+| Peak activation | 0.80 GiB |
+| Non-torch memory | 1.12 GiB |
+| CUDAGraph memory | **0.00 GiB** (eager — §4) |
+| **KV cache, the remainder** | **4.33 GiB** |
+
+Two findings.
+
+**1. KV memory *shrank* 5.46 → 4.33 GiB at an identical 128k/0.80 profile**, and
+the pool with it: **234,645 → 183,314 tokens, 1.79× → 1.40×** concurrency at
+131,072 tokens per request. Weights are byte-identical (12.87 GiB), so the newer
+base spends ~1.1 GiB more outside the KV pool. **This is the real cost of the
+`0.26.0-b1` upgrade:** decode got 21% faster and the KV pool got 22% smaller.
+Single-stream users trade nothing; anything relying on concurrency at long
+context lost a fifth of its headroom. Finding 2 below buys it back.
+
+**2. There is ~1.86× of unused KV headroom, and the engine says so itself.** The
+same log line ends:
+
+```
+Replace gpu_memory_utilization config with `--kv-cache-memory=4496187392`
+(4.19 GiB) to fit into requested memory, or `--kv-cache-memory=8647532544`
+(8.05 GiB) to fully utilize gpu memory.
+```
+
+8.05 GiB of KV is 1.86× today's 4.33 GiB — the same order of capacity gain as
+`--kv-cache-dtype fp8` (§8.2), without fp8's accuracy question. Reaching it needs
+util ≈ 0.955, or better, `--kv-cache-memory` set explicitly, which sizes the pool
+directly instead of leaving it as whatever the util budget does not spend.
+**Untested.** It would leave only ~0.15 GiB of the card unallocated, so an
+intermediate value is the sane first attempt. Note that the 0.86 util ceiling
+carried over from the stock engine does **not** bind here: eager reserves no
+Inductor or CUDAGraph buffers, and the 0.00 GiB row above is the proof (§4).
+
 `GET /metrics` does **not** expose pool size on this build (only
-`kv_cache_usage_perc`), so filling in the `0.26.0-b1` row needs a boot-log read:
+`kv_cache_usage_perc`), so the two missing cells still need a boot-log read:
 
 ```bash
 docker compose -f scaler/compose.yaml logs \
@@ -197,12 +237,121 @@ Consequences:
 - Eager disables torch.compile, so there is no compile-buffer growth and util is
   **not** constrained by Inductor buffers on this engine. 0.85 would be safe; we
   use 0.80 to match the stock engine (raised from 0.75 on 2026-07-08, once the
-  B60 stopped driving displays).
-- `0.21.0-b1` added "experimental XPU graph" support and the base is now much
-  newer — either *might* change this. Re-test explicitly as a
-  correctness-verified experiment; never flip it blind.
+  B60 stopped driving displays). The `0.26.0-b1` boot log now quantifies that
+  headroom — §3.
+- The base is five minors newer than the image that failed, which *might* change
+  the verdict — but re-test it as a deliberate, correctness-verified experiment,
+  never flip it blind. The fork's "experimental XPU graph" support, added in
+  `0.21.0-b1`, is a **different** switch and is covered below.
 
 gpt-oss-20b is MXFP4 (pre-quantised) — **do not pass `--quantization`**.
+
+### XPU Graph — tested 2026-09-03, a **no-op** under eager. Do not set it.
+
+| Configuration | Image (full tag) | Date tested | Result |
+|---------------|------------------|-------------|--------|
+| `VLLM_XPU_ENABLE_XPU_GRAPH=1` + `--enforce-eager` | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-03 | **No effect. Accepted, changed nothing, reverted.** |
+| `VLLM_XPU_ENABLE_XPU_GRAPH=1` without `--enforce-eager` | — | **not tested** | Would reintroduce the empty-output risk above |
+
+The variable **is** read — setting it removes the `xpu.py:285` warning — but
+nothing downstream changes. Measured against a same-boot baseline on the same
+image:
+
+| Metric | Baseline | `VLLM_XPU_ENABLE_XPU_GRAPH=1` |
+|--------|----------|-------------------------------|
+| `bench.sh 400` | 84.3 / 85.6 / 85.6 tok/s | 85.6 / 85.6 / 85.6 (run 1 cold, 85.6, discarded) |
+| `bench.sh 200` | 86.0 / 86.0 / 86.0 tok/s | 86.0 / 86.0 / 86.0 |
+| TTFT | ~73 ms | ~73–74 ms |
+| KV cache / pool | 4.33 GiB / 183,314 tok / 1.40× | **byte-identical** |
+| CUDAGraph memory | 0.0 GiB | **0.0 GiB** |
+| `smoke.sh` | ALL PASS, reasoning 1082 chars | ALL PASS, reasoning 1082 chars |
+| Greedy reference generation | — | **byte-for-byte identical** (`temperature: 0`) |
+
+Three independent signals say the graph path never engaged: **zero** VRAM
+allocated for graphs, **zero** capture/replay lines in the boot log, and
+identical throughput at both budgets. `--enforce-eager` still logs
+`mode: CompilationMode.NONE` / `cudagraph_mode: NONE`, so the most likely
+explanation is that the fork's graph path is gated on the same compiled-mode
+machinery eager switches off, and the env var only controls whether it *would* be
+used. Setting it while eager is on is therefore inert — the warning is telling you
+about a knob that cannot do anything in this configuration.
+
+**Conclusion: not a lever, and the warning in the log is safe to ignore.**
+Reaching it would mean dropping `--enforce-eager`, which is the configuration
+that returns empty output (table above) — so XPU Graph is gated behind a known
+correctness failure, not merely untested. Nothing to pursue unless a future image
+either fixes compiled mode or decouples the two.
+
+The remaining notes below are why it looked promising, kept so the reasoning is
+auditable if a later image changes the picture.
+
+#### Background
+
+Read from the `0.26.0-b1` boot log, 2026-09-03. Three gates are logged, not one:
+
+```
+WARNING [vllm.py:1172] Enforce eager set, disabling torch.compile and CUDAGraphs.
+                       This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+INFO    [vllm.py:1401] Cudagraph is disabled under eager mode
+WARNING [xpu.py:285]   XPU Graph is disabled by environment variable,
+                       please set VLLM_XPU_ENABLE_XPU_GRAPH=1 to enable it.
+```
+
+The first two are stock vLLM reacting to `--enforce-eager`. The third is the
+fork's own code in `platforms/xpu.py`, and it attributes the disable to **the
+environment variable**, not to eager — a parallel implementation to upstream's
+CUDAGraph path, with its own switch. The same boot confirms the upstream path is
+fully off: `'mode': CompilationMode.NONE`, `cudagraph_mode: CUDAGraphMode.NONE`,
+`0.0 GiB for CUDAGraph memory`.
+
+**What it does.** Level Zero / SYCL command-graph capture-and-replay, the XPU
+analogue of CUDA graphs: the decode loop's kernel submissions are captured once
+per shape and replayed as a single graph, removing per-launch host overhead. It
+targets *launch-bound* decode, which is exactly single-stream gpt-oss-20b (3.6B
+active params, many small kernels). It does nothing for prefill or for a
+saturated batch, and captured graphs cost VRAM this config currently does not
+spend.
+
+**Why it looked worth testing.** The `xpu.py:285` wording implied the variable
+could be set **while keeping `--enforce-eager`** — correctness guarantee retained,
+only graph replay added — which would have made it the one remaining
+decode-*speed* lever besides MTP (fp8 KV and `--kv-cache-memory` buy concurrency,
+not speed). The measurement above shows the wording was misleading: the variable
+is accepted under eager and does nothing.
+
+**What the test cost, for calibration:** two container recreates, ~40 s boot each,
+about 20 minutes end to end including baselines. Cheap enough to be worth
+resolving even at low odds, which is the only reason it was run.
+
+**Upstream documents none of it.** The variable appears neither in
+[the pinned README](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md)
+nor in [`main`'s](https://github.com/intel/llm-scaler/blob/main/vllm/README.md) —
+both checked 2026-09-03. The only published mention is the `0.21.0-b1` release
+note ("experimentally support XPU graph"); the string itself lives in the image,
+in `platforms/xpu.py`. So there is nothing to link, and no documented values
+beyond `=1`.
+
+**The procedure used, reusable for any scaler flag on a live engine** —
+correctness before speed, because this engine's known failure mode is silent:
+
+1. **Baseline on the running container first, with no downtime:** boot-log pool
+   line, `bench.sh 400` ×3, `bench.sh 200` ×3, `smoke.sh`, plus one
+   `temperature: 0` reference generation saved to a file. Cross-boot comparisons
+   are worth much less — the 2026-08-21 fp8 KV test lost ~2% to exactly that.
+2. Change `environment:`, then `docker compose up -d` — it recreates in place, so
+   no separate `stop` and less downtime.
+3. Confirm the flag was actually *read* (here: the `xpu.py:285` warning
+   disappearing), and re-read the `gpu_worker.py:857` budget line. A flag that
+   changes no memory figure and adds no log line has probably not engaged.
+4. `./smoke.sh`, then `diff` the reference generation. A tok/s number from a run
+   returning empty or subtly wrong text looks excellent and means nothing.
+5. `./bench.sh 400` and `./bench.sh 200`, discarding run 1 — the recreate is a
+   **cold** start (§3 bench hygiene).
+6. **Decide against a threshold fixed in advance** (this test used: keep only if
+   ≥5% at both budgets with smoke passing), then either record the win here or
+   revert the same session. An inert undocumented env var left set is a liability
+   at the next image bump, when its semantics may change silently.
+7. Record the outcome here with the image tag and date, pass or fail.
 
 ---
 
@@ -257,6 +406,7 @@ Only the parts where our experience **differs from the docs** are recorded here:
 |----------|-------------|----------|
 | `VLLM_QUANTIZE_Q40_LIB` | The path in Intel's README (`/usr/local/lib/python3.12/dist-packages/…`) is **wrong for this image line** and crash-loops the engine with "cannot open shared object file". The working path is under `/opt/venv/…`, found by `find` inside the image. | `:0.21.0-b3`, 2026-08-12. ⚠ **Unverified on `:0.26.0-b1`**, which grew ~50% — re-check before using `sym_int4`. |
 | `HF_TOKEN` | Not needed for current models: `google/gemma-4-26B-A4B-it` is `gated: false`, apache-2.0 (unlike gemma 2/3). Kept as value-only passthrough so the file carries no secret and empty means anonymous. | HF API, 2026-08-12 |
+| `VLLM_XPU_ENABLE_XPU_GRAPH` | **Deliberately not set — tested and it does nothing under `--enforce-eager`** (§4). Undocumented upstream in both the pinned and `main` READMEs; exists only in the image and one release note. The `xpu.py:285` warning recommending it is **safe to ignore** and will appear on every boot. | Measured on `:0.26.0-b1`, 2026-09-03 |
 
 ---
 
@@ -372,7 +522,16 @@ and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/v
 
 - Bench the **stock** engine to close the base-vs-scaler comparison — the
   original point of keeping both folders, and now the only missing piece.
-- Capture KV-pool size / max concurrency for `0.26.0-b1` from the boot log (§3).
+- ~~Capture KV-pool size / max concurrency for `0.26.0-b1`~~ **done 2026-09-03**:
+  183,314 tok / 1.40×, down from b3's 234,645 / 1.79× (§3).
+- ~~Test `VLLM_XPU_ENABLE_XPU_GRAPH=1` under `--enforce-eager`~~ **done
+  2026-09-03: no-op, reverted** (§4). MTP is now the only untried decode-*speed*
+  lever.
+- Consider `--kv-cache-memory` instead of util for pool sizing (§3): the engine
+  reports 8.05 GiB available against 4.33 GiB in use, i.e. ~1.86× concurrency for
+  free, no fp8 accuracy question. **This is now the best-value untested change on
+  this engine** — it recovers the pool the `0.26.0-b1` upgrade cost and more.
+  Leaves little slack at the top end, so try an intermediate value first.
 - Re-verify the `VLLM_QUANTIZE_Q40_LIB` path on this image (§7) if `sym_int4` is
   ever used.
 - `healthcheck.start_period` is still `7200s`, which was raised for the gemma-4
