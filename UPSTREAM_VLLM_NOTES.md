@@ -3,9 +3,10 @@
 Companion to [`vllm_openai_xpu/compose.yaml`](vllm_openai_xpu/compose.yaml), the
 way [`SCALER_NOTES.md`](SCALER_NOTES.md) is to `scaler/compose.yaml`.
 
-**Status: UNVALIDATED on the B60 as of 2026-09-04.** Nothing here has been
-booted. Every claim below was read from the `v0.28.0` git tag or the Docker Hub
-tag API — none of it is a measurement on this card.
+**Status: BOOTED AND MEASURED on the B60.** Current pin `v0.29.0` with the V2
+model runner — 83.5 tok/s, a 338,928-token KV pool (2.59x @128k), `smoke.sh` ALL
+PASS, measured 2026-09-09 (§10). Sections 1–9 were written against `v0.28.0`;
+where 0.29.0 changed an answer, §10 says so and wins.
 
 ---
 
@@ -35,16 +36,17 @@ zero XPU tags and wrongly suggests no image exists.
 
 | Tag | Pushed | Compressed |
 |---|---|---|
-| `v0.28.0` (our pin) | 2026-08-26 | 4.14 GB |
-| `latest` | 2026-08-26 | → v0.28.0 |
+| `v0.29.0` (our pin) | 2026-09-09 | 4.17 GB |
+| `latest` | 2026-09-09 | → v0.29.0 |
 | `nightly` | daily | 4.16 GB |
+| `v0.28.0` | 2026-08-26 | 4.14 GB |
 | `v0.27.1` / `v0.27.0` | Aug 11 / Aug 10 | 5.00 GB |
 | `v0.26.0` (oldest stable XPU) | 2026-07-25 | 9.44 GB |
 
 Two contrasts with the Intel images: `latest` here **does** track newest stable
 (see [`SCALER_NOTES.md`](SCALER_NOTES.md) §2 for why it does not there), and
-4.14 GB is roughly **half** the 7.78 GB of `intel/llm-scaler-vllm:0.26.0-b1`.
-Image size has fallen every release.
+4.17 GB is roughly **half** the 7.78 GB of `intel/llm-scaler-vllm:0.26.0-b1`.
+Image size fell every release up to 0.28.0 and has been flat since.
 
 Version position — upstream is ahead of both engines we run:
 
@@ -52,9 +54,11 @@ Version position — upstream is ahead of both engines we run:
 |---|---|---|
 | `intel/vllm:0.21.0-ubuntu24.04` | 0.21.0 | 2026-08-06 |
 | `intel/llm-scaler-vllm:0.26.0-b1` | 0.26.0 | 2026-09-02 |
-| `vllm/vllm-openai-xpu:v0.28.0` | **0.28.0** | 2026-08-26 |
+| `vllm/vllm-openai-xpu:v0.29.0` | **0.29.0** | 2026-09-09 |
 
-`v0.29.0rc4` is already tagged upstream, so 0.28.0 is stable, not bleeding edge.
+The XPU image lands the same day as the GitHub release (2026-09-09, ~3 h before
+the release notes were published), so this repo is one `docker pull` behind
+mainline rather than a fork's release cycle.
 
 ## 3. Graph mode — the one lever, and it is single-GPU-only
 
@@ -165,9 +169,14 @@ Intel's fork keeps some B60-specific surface that upstream lacks:
 - extra arch registrations (Gemma 4, Kimi-VL, ERNIE-VL)
 - Battlematrix multi-GPU tuning
 
-Upstream's XPU model table is narrower, though it does list Qwen3-30B-A3B and
-`Qwen3-30B-A3B-GPTQ-Int4` as ✅ — see
-[`model-freshness-fit-b60`] territory for whether those fit the VRAM budget.
+Upstream's XPU model table was narrower at 0.28.0. **0.29.0 restructured it**
+(✅/🟨 columns replaced by a single Dtype column) and widened it considerably:
+Qwen3-Next-80B-A3B, DeepSeek-V4-Flash, Qwen3-VL-32B, Qwen3.5-35B-A3B,
+gemma-3-27b, gemma-4-31B and gemma-4-26B-A4B are all now listed as
+BF16/Online FP8, plus `Qwen3-30B-A3B-FP8` alongside the existing
+`Qwen3-30B-A3B-GPTQ-Int4`. Being listed is an architecture claim, not a fit
+claim — the host-RAM and VRAM gates are unchanged, and none of this revisits a
+route already decided against.
 
 Requirements worth noting: **Python 3.12 exactly** (the `vllm-xpu-kernels`
 wheels are 3.12-only and upstream flags this as a MUST), `torch==2.13.0` XPU,
@@ -257,7 +266,7 @@ when another engine's container lingers; the fix is to `down` that folder.
 | Boots on the B60? | **Yes**, at 128k/0.80 **with `--enforce-eager`** (§3) |
 | `group_add` enough, or `--privileged`? | **`group_add` suffices** — no `ze_fd_manager` failure, despite upstream's docs using `--privileged` |
 | MXFP4 native or dequantized? | **Native** — engine config reports `quantization=gpt_oss_mxfp4`, weights load at 12.87 GiB (bf16 would be ~42 GB) |
-| Which engine is serving? | `curl :8000/version` → `{"version":"0.28.0"}` |
+| Which engine is serving? | `curl :8000/version` → `{"version":"0.29.0"}` since the bump (§10) |
 | Weights re-downloaded? | **No** — `llm_hf-cache` attached, load took 2.3 s warm |
 
 Memory breakdown at 128k/0.80 eager, from `gpu_worker.py:804`:
@@ -388,20 +397,143 @@ to 2.14×, then 8.05 GiB should take the scaler well past that **while keeping i
 anything further on upstream.** The engine choice turned out to matter less than
 the pool sizing.
 
-### Verdict as of 2026-09-04 (supersedes the one above)
+### Verdict as of 2026-09-04 (superseded by §10)
 
 Upstream `v0.28.0` is **correct, capacity-competitive, and ~4% slower**. With
 the pool pinned it beats the scaler on concurrency (2.14× vs 1.40×) but loses
 decode (−3.9%). Not a reason to migrate — the scaler keeps the speed crown and
 has not yet been given the same lever.
 
+---
+
+## 10. The 0.29.0 bump — MEASURED 2026-09-09
+
+`v0.29.0` released 2026-09-09 (GitHub release 08:54 UTC; the XPU image was
+pushed 05:43 UTC, ~3 h earlier). Pin moved `v0.28.0` → `v0.29.0`.
+
+**Verified unchanged, so the compose stayed valid:** `vllm/platforms/xpu.py` is
+**byte-identical** between the tags (graph gating, `supported_quantization`
+mxfp4/gpt_oss_mxfp4, spawn, shutdown_timeout), `ENTRYPOINT ["vllm","serve"]`,
+Python 3.12, `torch==2.13.0`, `triton==3.7.2+xpu`, and the `--enforce-eager`,
+`--kv-cache-memory`, `openai_gptoss`, `openai` surfaces. XPU deps moved only
+`vllm_xpu_kernels` 0.1.13.2 → 0.1.14.1, plus UCX `v1.21.x` / NIXL 1.3.2. Nothing
+in the release's Breaking Changes list touches this engine.
+
+### 10.1 Model Runner V2 became the default — the whole story of this upgrade
+
+At `v0.28.0`, `VllmConfig.use_v2_model_runner` required
+`arch ∈ DEFAULT_V2_MODEL_RUNNER_ARCHITECTURES or not is_moe`.
+`GptOssForCausalLM` is in neither set, so **0.28.0 silently ran V1** all along.
+0.29.0 (#53183) deletes that gate: V2 is now default unless the arch is on the
+ROCm MRV1 list, Triton is missing, or a config feature is unsupported. None
+apply here → **0.29.0 selects V2 for this model**.
+
+Confirming which runner is live, two ways:
+
+| | V1 | V2 |
+|---|---|---|
+| Log line | *(none — absence is the signal)* | `xpu_worker.py:113 Using V2 Model Runner` |
+| Module in log paths | `gpu_model_runner.py` | `worker/gpu/model_runner.py` |
+
+`Initializing a V1 LLM engine` is the **engine** V1, a different axis — do not
+read it as the runner. Override with `VLLM_USE_V2_MODEL_RUNNER` (`0`/`1`,
+integer only; blank crashes `bool(int(""))`).
+
+### 10.2 ⚠️ V2 SEGFAULTS unless `SYCL_CACHE_PERSISTENT=0`
+
+First V2 boot died after a clean memory profile, with no Python traceback:
+
+```
+!!!!!!! Segfault encountered !!!!!!!
+  at::native::xpu::topk_kernel → sbtopk_try_launch → single_wg_topk_try_launch
+  → single_wg_launch_impl<c10::BFloat16, 8, 32, int>
+  → sycl::handler::finalize() → ProgramManager::getBuiltURProgram
+  → PersistentDeviceCodeCache::getItemFromDisc → getSortedImages   ← segfault
+```
+
+Traced to source: `gpu_worker.py:864` runs `warmup_kernels(...)` **for V2 only**
+(V1 takes the `elif` at :867 → `_dummy_sampler_run`). That warmup builds its
+batch with `SamplingParams.for_sampler_warmup()`, which hardcodes `logprobs=5,
+prompt_logprobs=1` to "exercise all sampler logic" — and logprobs reach
+`sampler.py:335 torch.topk(...)`, whose XPU kernel segfaults during SYCL program
+build while reading the **persistent** device-code cache.
+
+**Fix: `SYCL_CACHE_PERSISTENT=0`** (that variable is *ours*, not a vLLM default).
+Verified as a single-variable change against the failing run: V2 then boots
+clean and `smoke.sh` is ALL PASS. Cost is a device-kernel rebuild each boot;
+total boot still ~70 s.
+
+Notes on the failure mode, for whoever meets it next:
+
+- The crashing feature is **logprobs, which this deployment never requests** —
+  V2 died proving a path we don't use. Normal serving never reaches it.
+- Not memory: `OOMKilled=false`, the profile printed, the pool allocated.
+- No config knob avoids the warmup. `for_sampler_warmup()` hardcodes its params,
+  `--max-logprobs` does not reach it (warmup builds `SamplingParams` directly,
+  unvalidated), and `envs.py` has no skip for `warmup_kernels` —
+  `KernelConfig.enable_jit_warmup` governs the *other* warmup, which succeeds.
+- **Unreported upstream** as of 2026-09-09: zero issues match `getSortedImages`
+  or `PersistentDeviceCodeCache`. Nearest neighbours are #55231 (open, XPU MoE
+  topk, but in `vllm-xpu-kernels`, not aten's `topk_kernel`) and #46179 (MRV2
+  failing on ROCm — same shape, different platform). Worth filing.
+
+### 10.3 Four configs measured, same box, same scripts
+
+| | scaler `0.26.0-b1` | 0.29.0 + V1, pinned 6.63 GiB | 0.29.0 + V2, util only | **0.29.0 + V2, pinned 8.01 GiB** |
+|---|---|---|---|---|
+| tok/s @400 | **85.6** | 82.4 | 83.3 | 83.1 |
+| tok/s @200 | **86.0** | 82.8 | 83.6 | 83.5 |
+| TTFT | ~73 ms | 76 ms | 76 ms | 76 ms |
+| KV pool | 183,314 tok | 280,425 tok | 169,123 tok | **338,928 tok** |
+| Concurrency @128k | 1.40× | 2.14× | 1.29× | **2.59×** |
+| `smoke.sh` | PASS | PASS | PASS | **ALL PASS** |
+
+**The image bump alone is a no-op.** 0.29.0 + V1 reproduced 0.28.0 + V1 exactly
+— 82.4 / 82.8 tok/s, 76 ms, 280,425 tokens, 12.87 GiB weights — which is what
+made the runner the only variable in every later comparison.
+
+**V2 is faster and leaner than V1:**
+
+| | V1 | V2 |
+|---|---|---|
+| Weights | 12.87 GiB | 12.87 GiB |
+| Non-torch | ~1.50 GiB | **~1.03 GiB** |
+| Peak activation | 0.69 GiB | **0.27 GiB** |
+| Advised "fully utilize" | 6.63 GiB (`7117934592`) | **8.01 GiB (`8603448832`)** |
+
+⚠️ **`--kv-cache-memory` is runner-specific.** The byte value comes from that
+runner's memory profile; carrying V1's 6.63 GiB onto V2 leaves ~1.4 GiB
+unclaimed. Re-derive it after any runner or image change by commenting the flag
+out for one boot and reading `gpu_worker.py:860`.
+
+Same two limits as before: **2.59× is allocated capacity, not measured
+concurrency** (`bench.sh` is single-stream), and the pinned pool leaves ~0.15 GiB
+of card headroom — defensible only because `--enforce-eager` means no growing
+compile buffers.
+
+### 10.4 Verdict as of 2026-09-09
+
+Upstream `v0.29.0` + V2 + the pinned pool is **the best-measured config this
+engine has had**: `+85%` KV pool against the scaler for `−2.9%` decode, and
+`+0.9%` speed with `+21%` pool against where the engine started the day. The
+scaler still holds the decode crown at 85.6 tok/s — and still has not been given
+the `--kv-cache-memory` lever, which remains the highest-value open experiment.
+
 ### Still open
 
-1. **`--kv-cache-memory` on the scaler** (8.05 GiB) — the priority.
-2. A genuine **concurrent-load** test, since 2.14× is unverified capacity.
+1. **`--kv-cache-memory` on the scaler** (8.05 GiB) — still the priority, and now
+   better motivated: the same lever took this engine 1.29× → 2.59×.
+2. A genuine **concurrent-load** test — 2.59× is unverified capacity.
 3. `VLLM_XPU_ENABLE_XPU_GRAPH=1` — only available single-GPU (§3), and compiled
    mode needs its own correctness pass before any speed claim.
 4. The stock `intel/vllm:0.21.0` baseline, still unmeasured.
+5. **File the MRV2 segfault upstream** (§10.2) — clean repro, no existing issue.
+6. Cold-boot cost of `SYCL_CACHE_PERSISTENT=0` measured properly; and whether a
+   later image lets the persistent cache be re-enabled.
+7. Whether `/dev/dri/by-path` is still needed — 0.29.0 skips the oneCCL warm-up
+   at world_size=1 (#52389), which may make it redundant (§5).
+8. `Auto-initialization of reasoning token IDs failed` appears in the 0.29.0 boot
+   log. `smoke.sh` reasoning passes, so it is cosmetic; unattributed to a runner.
 
-If it wins, the follow-on doc work is a sweep — `README.md`, `DEVELOPER.md` and
-`INTEL_ARC_B60.md` all describe a **two**-engine repo and a two-way swap.
+The follow-on doc work is a sweep — `README.md`, `DEVELOPER.md` and
+`INTEL_ARC_B60.md` all still describe a **two**-engine repo and a two-way swap.

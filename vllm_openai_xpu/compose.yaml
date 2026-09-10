@@ -4,7 +4,9 @@
 # `vllm-scaler` service in scaler/compose.yaml: same model, same :8000.
 #
 # !! SINGLE GPU — run EXACTLY ONE of the three engines at a time.
-# !! UNVALIDATED on this B60 as of 2026-09-04. `restart: "no"` on purpose.
+# !! MEASURED on this B60 2026-09-09: 0.29.0 + V2 runner + the pinned pool below
+# !! = 83.5 tok/s, 338,928-token KV pool (2.59x @128k), smoke ALL PASS.
+# !! `restart: "no"` on purpose.
 # Rationale, verified upstream facts, what to measure:  ../UPSTREAM_VLLM_NOTES.md
 name: llm   # SAME project as vllm_xpu/scaler ON PURPOSE — shares the hf-cache volume
 
@@ -12,11 +14,13 @@ services:
   vllm-openai-xpu:
     # Upstream's own XPU image, separate Docker Hub repo from the CUDA one.
     # Here `latest` DOES track newest stable (unlike the Intel images).
-    image: vllm/vllm-openai-xpu:v0.28.0
+    image: vllm/vllm-openai-xpu:v0.29.0
     container_name: vllm-openai-xpu
-    restart: "no"            # unvalidated engine — do not let it fight for the GPU
+    restart: "no"            # evaluation engine — do not let it fight for the GPU
     # Whole /dev/dri + the by-path bind below are BOTH required, even at
     # world_size=1. This is upstream's documented recipe, not a local workaround.
+    # (0.29.0 skips the oneCCL warm-up at world_size=1, so the bind may now be
+    # redundant here — keep it until a boot without it proves otherwise.)
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -34,12 +38,19 @@ services:
     environment:
       HF_HOME: /root/.cache/huggingface
       ZES_ENABLE_SYSMAN: "1"
-      SYCL_CACHE_PERSISTENT: "1"
+      # MUST be 0 with the V2 runner below: 1 SEGFAULTS at boot inside the SYCL
+      # persistent code-cache read. Costs a kernel rebuild each boot (~70 s
+      # total). ../UPSTREAM_VLLM_NOTES.md §10
+      SYCL_CACHE_PERSISTENT: "${SYCL_CACHE_PERSISTENT:-0}"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"    # platform auto-sets this; explicit for parity
       no_proxy: "localhost,127.0.0.1"
       # Graph mode is single-GPU-only upstream and defaults OFF. Flipping this to
       # 1 is the one speed lever this engine adds. ../UPSTREAM_VLLM_NOTES.md §3
       VLLM_XPU_ENABLE_XPU_GRAPH: "${VLLM_XPU_ENABLE_XPU_GRAPH:-0}"
+      # V2 is upstream's default from 0.29.0 on, and MEASURED faster and leaner
+      # here (+1.1% tok/s, non-torch 1.50 -> 1.03 GiB). 0 pins V1 for A/B work.
+      # Integer only — a blank value crashes at boot, so the `:-1` is load-bearing.
+      VLLM_USE_V2_MODEL_RUNNER: "${VLLM_USE_V2_MODEL_RUNNER:-1}"
       HF_TOKEN: "${HF_TOKEN:-}"                # empty = anonymous; no secret in this file
     ports:
       - "8000:8000"          # same port as the other engines (only one runs at a time)
@@ -57,13 +68,13 @@ services:
       - "--max-model-len=${VLLM_MAX_MODEL_LEN:-131072}"
       - "--gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
       - "--enforce-eager"
-      # UNDER TEST 2026-09-04. util 0.80 caps the engine at 18.17 GiB of a 22.71 GiB
-      # card, stranding ~4.5 GiB and leaving only a 3.12 GiB KV pool (1.01x @128k).
-      # This is the exact byte value the engine itself printed for "fully utilize
-      # gpu memory" -> 6.63 GiB pool. Leaves ~0.14 GiB card headroom, which is only
-      # safe because --enforce-eager means no growing compile buffers.
-      # Set VLLM_KV_CACHE_MEMORY= (empty) to fall back to util-based sizing.
-      - "--kv-cache-memory=${VLLM_KV_CACHE_MEMORY:-7117934592}"
+      # util 0.80 alone strands ~4.5 GiB of the 22.71 GiB card (1.29x pool). This is
+      # the byte value the V2 runner printed for "fully utilize gpu memory", MEASURED
+      # at 338,928 tokens / 2.59x @128k on ~0.15 GiB of headroom — safe only because
+      # --enforce-eager caps compile buffers. It is RUNNER-SPECIFIC: V1 profiles a
+      # different value (7117934592 -> 280,425 tok). To go back to util-based sizing,
+      # comment this line OUT: a blank VLLM_KV_CACHE_MEMORY resolves to the default.
+      - "--kv-cache-memory=${VLLM_KV_CACHE_MEMORY:-8603448832}"
       - "--reasoning-parser=${VLLM_REASONING_PARSER:-openai_gptoss}"
       - "--enable-auto-tool-choice"
       - "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-openai}"
