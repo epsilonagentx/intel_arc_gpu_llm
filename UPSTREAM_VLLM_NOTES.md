@@ -394,23 +394,34 @@ engine's printed byte value was accurate.
    (`Actual usage` / non-torch / activation) **disappears from the log**. Unset
    the flag when you need that diagnostic.
 
-### 🔑 The real finding: this lever is engine-agnostic and UNTESTED on the scaler
+### 🔑 The real finding: this lever is engine-agnostic — and the prediction held
 
 The util-based sizing strands memory on *both* engines. The scaler's own log
 offered **8.05 GiB** (vs upstream's 6.63). If 6.63 GiB takes upstream from 1.01×
 to 2.14×, then 8.05 GiB should take the scaler well past that **while keeping its
 85.6 tok/s** — dominating upstream on both axes.
 
-**So the highest-value next experiment is `--kv-cache-memory` on `scaler/`, not
-anything further on upstream.** The engine choice turned out to matter less than
-the pool sizing.
+**✅ Tested on the scaler 2026-09-10, and that is exactly what happened:**
+340,663 tokens / **2.60×** at an unchanged 85.6 tok/s
+([`SCALER_NOTES.md`](SCALER_NOTES.md) §3). So the scaler now leads on *both*
+axes — +0.5% pool and +3.0% decode against upstream's best config — and the
+engine choice mattered less than the pool sizing, as this section predicted.
+
+One naming detail the scaler run exposed, which applies to this image too: the
+declared option is **`--kv-cache-memory-bytes`** (`arg_utils.py:1275`), not the
+`--kv-cache-memory` the log advises. The short form works only because vLLM's
+parser has `allow_abbrev=True` and it is an unambiguous prefix — which is why
+the pinned-pool boots here succeeded with it. `vllm_openai_xpu/compose.yaml` has
+been moved to the canonical `-bytes` spelling: same parsed argument, same value,
+but it cannot break if upstream ever adds another `--kv-cache-memory*` option.
 
 ### Verdict as of 2026-09-04 (superseded by §10)
 
 Upstream `v0.28.0` is **correct, capacity-competitive, and ~4% slower**. With
 the pool pinned it beats the scaler on concurrency (2.14× vs 1.40×) but loses
-decode (−3.9%). Not a reason to migrate — the scaler keeps the speed crown and
-has not yet been given the same lever.
+decode (−3.9%). Not a reason to migrate — the scaler keeps the speed crown, and
+the concurrency half of that comparison expired on 2026-09-10 when the scaler
+was given the same lever (2.60×).
 
 ---
 
@@ -525,24 +536,38 @@ compile buffers.
 
 Upstream `v0.29.0` + V2 + the pinned pool is **the best-measured config this
 engine has had**: `+85%` KV pool against the scaler for `−2.9%` decode, and
-`+0.9%` speed with `+21%` pool against where the engine started the day. The
-scaler still holds the decode crown at 85.6 tok/s — and still has not been given
-the `--kv-cache-memory` lever, which remains the highest-value open experiment.
+`+0.9%` speed with `+21%` pool against where the engine started the day.
+
+⚠️ **Superseded a day later.** On 2026-09-10 the scaler was given the same
+`--kv-cache-memory-bytes` lever and reached 340,663 tokens / 2.60× at an
+unchanged 85.6 tok/s, so upstream's `+85%` pool advantage is gone and the
+standings are now:
+
+| | upstream 0.29.0 + V2, pinned | scaler b2, pinned | winner |
+|---|---|---|---|
+| tok/s @400 | 83.1 | **85.6** | scaler, +3.0% |
+| tok/s @200 | 83.5 | **86.1** | scaler, +3.1% |
+| KV pool | 338,928 tok | **340,663 tok** | scaler, +0.5% |
+| Concurrency @128k | 2.59× | **2.60×** | scaler |
+
+**The scaler now leads on both axes**, so there is no capacity argument left for
+migrating either. Upstream's remaining advantages are non-performance: two vLLM
+minors newer, half the image size, mainline rather than an undocumented beta, a
+trustworthy `latest`, and `xpu-smi` in the image.
 
 ### Still open
 
-1. **`--kv-cache-memory` on the scaler** (8.05 GiB) — still the priority, and now
-   better motivated: the same lever took this engine 1.29× → 2.59×.
-2. A genuine **concurrent-load** test — 2.59× is unverified capacity.
-3. `VLLM_XPU_ENABLE_XPU_GRAPH=1` — only available single-GPU (§3), and compiled
+1. A genuine **concurrent-load** test — 2.59× here and 2.60× on the scaler are
+   both *allocated* capacity, unverified under real parallel load.
+2. `VLLM_XPU_ENABLE_XPU_GRAPH=1` — only available single-GPU (§3), and compiled
    mode needs its own correctness pass before any speed claim.
-4. The stock `intel/vllm:0.21.0` baseline, still unmeasured.
-5. **File the MRV2 segfault upstream** (§10.2) — clean repro, no existing issue.
-6. Cold-boot cost of `SYCL_CACHE_PERSISTENT=0` measured properly; and whether a
+3. The stock `intel/vllm:0.21.0` baseline, still unmeasured.
+4. **File the MRV2 segfault upstream** (§10.2) — clean repro, no existing issue.
+5. Cold-boot cost of `SYCL_CACHE_PERSISTENT=0` measured properly; and whether a
    later image lets the persistent cache be re-enabled.
-7. Whether `/dev/dri/by-path` is still needed — 0.29.0 skips the oneCCL warm-up
+6. Whether `/dev/dri/by-path` is still needed — 0.29.0 skips the oneCCL warm-up
    at world_size=1 (#52389), which may make it redundant (§5).
-8. `Auto-initialization of reasoning token IDs failed` appears in the 0.29.0 boot
+7. `Auto-initialization of reasoning token IDs failed` appears in the 0.29.0 boot
    log. `smoke.sh` reasoning passes, so it is cosmetic; unattributed to a runner.
 
 The follow-on doc work is a sweep — `README.md`, `DEVELOPER.md` and

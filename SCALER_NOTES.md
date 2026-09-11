@@ -73,9 +73,10 @@ Other upstream sources:
 | Image | `intel/llm-scaler-vllm:0.26.0-b2` |
 | Base | vLLM 0.26.0 (engine reports `0.26.1.dev0+g568afb3a1.d20260907`) |
 | Model | `openai/gpt-oss-20b`, served as `gpt-oss-20b` |
-| Context / util | `--max-model-len 131072` (128k) / `--gpu-memory-utilization 0.80` |
+| Context | `--max-model-len 131072` (128k) |
+| KV pool | `--kv-cache-memory-bytes 8647520256` (8.05 GiB) — **overrides** `--gpu-memory-utilization 0.80`, which is kept only as the fallback. See §3 |
 | Boot mode | `--enforce-eager` — **mandatory**, see §4 |
-| Status | Boot-tested and validated 2026-09-10: `smoke.sh` ALL PASS, 85.6 tok/s, KV pool and VRAM budget byte-identical to b1 (§3) |
+| Status | Boot-tested and validated 2026-09-10: `smoke.sh` ALL PASS, 85.6 tok/s, KV pool 340,663 tokens / 2.60× (§3) |
 
 **Which engine owns `:8000`?** `curl -s localhost:8000/version`. The scaler
 reports `0.26.1.dev0…`; the stock `vllm_xpu` image reports `0.21.0`. Useful
@@ -188,6 +189,11 @@ b3-vs-`0.26.0-b1` comparison *is* matched on every axis.
 | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | 12.87 GiB / 7.68 s | 5.46 GiB | 234,645 tok | 1.79× |
 | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-03 | 12.87 GiB / 7.28 s | **4.33 GiB** | **183,314 tok** | **1.40×** |
 | `intel/llm-scaler-vllm:0.26.0-b2` | 2026-09-10 | 12.87 GiB / 7.65 s | **4.33 GiB** | **183,314 tok** | **1.40×** |
+| **`:0.26.0-b2` + `--kv-cache-memory-bytes`** (current) | **2026-09-10** | 12.87 GiB / **2.02 s** | **8.05 GiB** | **340,663 tok** | **2.60×** |
+
+The last row is the current configuration — see "Claiming the idle VRAM" below.
+Its faster load is not an improvement in loading: pinning the pool makes the
+engine **skip memory profiling** altogether, which is the ~5 s difference.
 
 b2's boot log reproduces b1's budget line for line — same weights, same peak
 activation (0.80 GiB), same non-torch (1.12 GiB), same 0.00 GiB CUDAGraph, same
@@ -232,18 +238,61 @@ Replace gpu_memory_utilization config with `--kv-cache-memory=4496187392`
 (8.05 GiB) to fully utilize gpu memory.
 ```
 
-(b2's byte value, read 2026-09-10; b1 printed `8647532544`. Re-read this line
-after any image bump rather than carrying a byte value forward — it comes from
-*that* build's memory profile.)
+At util 0.80 the budget is 19.12 GiB of the 22.99 GiB free, so **3.87 GiB of the
+card was never allocated at all** — KV is only ever the remainder after weights,
+activation and non-torch. The 0.86 util ceiling carried over from the stock
+engine does **not** bind here: eager reserves no Inductor or CUDAGraph buffers,
+and the 0.00 GiB row above is the proof (§4).
 
-8.05 GiB of KV is 1.86× today's 4.33 GiB — the same order of capacity gain as
-`--kv-cache-dtype fp8` (§8.2), without fp8's accuracy question. Reaching it needs
-util ≈ 0.955, or better, `--kv-cache-memory` set explicitly, which sizes the pool
-directly instead of leaving it as whatever the util budget does not spend.
-**Untested.** It would leave only ~0.15 GiB of the card unallocated, so an
-intermediate value is the sane first attempt. Note that the 0.86 util ceiling
-carried over from the stock engine does **not** bind here: eager reserves no
-Inductor or CUDAGraph buffers, and the 0.00 GiB row above is the proof (§4).
+### ⭐ Claiming the idle VRAM — MEASURED 2026-09-10, kept
+
+`--kv-cache-memory-bytes 8647520256` is now set in `scaler/compose.yaml`.
+
+| | util 0.80 only | **+ `--kv-cache-memory-bytes`** | Δ |
+|---|---|---|---|
+| KV memory | 4.33 GiB | **8.05 GiB** | +86% |
+| KV pool | 183,314 tok | **340,663 tok** | **+86%** |
+| Max concurrency @131,072 | 1.40× | **2.60×** | **+86%** |
+| `bench.sh 400` | 85.6 tok/s | **85.6 tok/s** | unchanged |
+| `bench.sh 200` | 86.1 tok/s | **86.1 tok/s** (median of 8) | unchanged |
+| TTFT | ~72 ms | ~72 ms | unchanged |
+| `smoke.sh` | ALL PASS | **ALL PASS** | — |
+| Greedy reference generation | — | **byte-for-byte identical** | — |
+
+**Capacity is free; speed is unaffected.** Decode is VRAM-*bandwidth*-bound, not
+capacity-bound, so a 1.86× pool buys concurrent long requests and nothing else.
+The same lever behaved identically on the upstream engine — 1.29× → 2.59× for
+82.4 → 82.3 tok/s ([`UPSTREAM_VLLM_NOTES.md`](UPSTREAM_VLLM_NOTES.md) §10.3).
+Note what it does *not* buy: 131,072 is already gpt-oss-20b's full window, so
+there is no context to gain, only parallelism.
+
+Four things worth knowing before touching this flag:
+
+1. **⚠ The flag the log advises is not the real flag — it only works by
+   accident.** The log says `--kv-cache-memory=…`, but the declared option is
+   **`--kv-cache-memory-bytes`** (`arg_utils.py:1166`). The short form is
+   accepted purely because vLLM's parser runs with `allow_abbrev=True`, so any
+   unambiguous prefix resolves — `--kv-cache-mem=…` parses too, verified in the
+   image. **Use the canonical `-bytes` form**, as the compose file does: an
+   abbreviation silently stops working the day upstream adds a second option
+   starting with `--kv-cache-memory`, and the failure then looks like an
+   unrelated boot error. Two sibling fields exist, `kv_cache_size_tokens` and
+   `kv_cache_max_concurrency`, but they are derived counters with no CLI flag —
+   bytes is the only input.
+2. **It overrides `--gpu-memory-utilization` completely** and says so:
+   *"reserved 8.05 GiB … as specified by kv_cache_memory_bytes config and
+   **skipped memory profiling**. This does not respect the
+   gpu_memory_utilization config."* The util flag is kept in the compose file
+   only as the fallback if the byte value is ever removed.
+3. **The value is absolute, not proportional, so it does not self-adjust.** It
+   assumes the 22.99 GiB free at startup that this host currently has (the B60
+   drives no displays). If anything else ever claims VRAM on this card, the
+   boot OOMs instead of quietly shrinking the pool — that is the trade for the
+   extra 3.7 GiB, and the log says as much: *"If OOM'ed, check the difference
+   of initial free memory between the current run and the previous run."*
+4. **Profiling is skipped, so the engine no longer prints an advised value.**
+   To re-derive the number after an image bump, comment the flag out for one
+   boot, read `gpu_worker.py:857`, then put it back.
 
 `GET /metrics` does **not** expose pool size on this build (only
 `kv_cache_usage_perc`), so those figures always need a boot-log read — run this
@@ -635,17 +684,13 @@ and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/v
 
 ## 9. Open items
 
-- **`--kv-cache-memory` instead of util for pool sizing (§3) — the priority.**
-  The engine reports 8.05 GiB available against 4.33 GiB in use, i.e. ~1.86×
-  concurrency for free, no fp8 accuracy question. The same lever is now
-  **measured on the sibling engine**: it took upstream's XPU image from 1.29× to
-  2.59× with decode unchanged
-  ([`UPSTREAM_VLLM_NOTES.md`](UPSTREAM_VLLM_NOTES.md) §10.3), so this is no
-  longer a speculative idea — it is a proven lever this engine has not been
-  given. It leaves little slack at the top end, so try an intermediate value
-  first, and re-read the advised byte value from *this* build's boot log (§3).
 - Bench the **stock** engine to close the base-vs-scaler comparison — the
   original point of keeping both folders.
+- **A genuine concurrent-load test.** 2.60× is *allocated* capacity, not
+  measured throughput: `bench.sh` is single-stream, so what has been proven is
+  that the pool allocates and single-stream stays correct — not that two
+  concurrent 128k requests actually run. Same caveat the upstream engine carries
+  ([`UPSTREAM_VLLM_NOTES.md`](UPSTREAM_VLLM_NOTES.md) §10.3).
 - `healthcheck.start_period` is still `7200s`, which was raised for the gemma-4
   experiment's ~52 GB download-and-quantise first boot. gpt-oss-20b only needs
   the ~1800s that covered its silent XPU cold start.
@@ -659,6 +704,10 @@ and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/v
 - ~~Re-verify the `VLLM_QUANTIZE_Q40_LIB` path~~ **done 2026-09-10**: correct on
   both 0.26.0 images (§7). The same sweep found
   `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` dead and removed it from the compose file.
+- ~~Size the pool with `--kv-cache-memory` instead of util~~ **done 2026-09-10:
+  taken, and kept** (§3). Pool 183,314 → **340,663 tokens**, concurrency
+  1.40× → **2.60×**, decode and correctness unchanged. Note the real flag is
+  `--kv-cache-memory-bytes`, not the name the log prints.
 - ~~MTP as the remaining decode-*speed* lever~~ **not available on this engine
   — the earlier note was wrong.** Upstream's
   [§3.6](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#36-mtp-enable)

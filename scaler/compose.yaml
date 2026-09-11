@@ -49,6 +49,9 @@ services:
     # fine but silently returns EMPTY content+reasoning. Do not remove it
     # without re-verifying correctness. ../SCALER_NOTES.md §4
     # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
+    # --kv-cache-memory-bytes OVERRIDES --gpu-memory-utilization (which is kept
+    # only as the fallback if the byte value is removed). The value is absolute
+    # and image-specific — re-derive it on an image bump. ../SCALER_NOTES.md §3
     command:
       - |
         vllm serve openai/gpt-oss-20b \
@@ -56,6 +59,7 @@ services:
           --port 8000 \
           --max-model-len 131072 \
           --gpu-memory-utilization 0.80 \
+          --kv-cache-memory-bytes 8647520256 \
           --enforce-eager \
           --reasoning-parser openai_gptoss \
           --enable-auto-tool-choice \

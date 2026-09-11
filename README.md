@@ -398,6 +398,14 @@ re-run `./smoke.sh` before trusting the engine — and read the boot log for the
 new KV-pool figures, since `/metrics` does not expose them (commands in
 [SCALER_NOTES.md](SCALER_NOTES.md) §3).
 
+The scaler also sizes its KV pool explicitly with `--kv-cache-memory-bytes`
+rather than letting `--gpu-memory-utilization` decide it, which is worth
+**2.60× concurrency** at 128k instead of 1.40× for no loss of speed. That byte
+value is specific to this image and this card's free VRAM, so **re-derive it if
+you change either** — it is absolute, and a boot that no longer fits fails
+rather than shrinking the pool. Procedure in
+[SCALER_NOTES.md](SCALER_NOTES.md) §3.
+
 The scaler config boots with `--enforce-eager` and **must stay that way** for
 gpt-oss-20b: compiled mode was tested and returns empty output (a silent
 correctness failure), so the eager number is the engine's real speed, not an

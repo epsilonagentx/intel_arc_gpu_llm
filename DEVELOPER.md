@@ -159,11 +159,22 @@ image-by-image table, the bench-hygiene rules that make those numbers comparable
 and the KV-pool figures are all in [SCALER_NOTES.md](SCALER_NOTES.md) §3.
 
 **b1 → b2 is a bug-fix release, and it is measurably a no-op here**: identical
-tok/s, TTFT, KV pool (183,314 tok / 1.40×) and VRAM budget, `smoke.sh` still ALL
-PASS. All four of its named fixes land in paths gpt-oss-20b does not use — MTP
-(which this model cannot run at all), `sym_int4`, and block-FP8. Take it as cheap
-insurance and expect no change; the reasoning is in
-[SCALER_NOTES.md](SCALER_NOTES.md) §2.
+tok/s, TTFT, KV pool and VRAM budget, `smoke.sh` still ALL PASS. All four of its
+named fixes land in paths gpt-oss-20b does not use — MTP (which this model cannot
+run at all), `sym_int4`, and block-FP8. Take it as cheap insurance and expect no
+change; the reasoning is in [SCALER_NOTES.md](SCALER_NOTES.md) §2.
+
+**The pool is now sized explicitly, not left as the util remainder.** Adding
+`--kv-cache-memory-bytes 8647520256` on 2026-09-10 claimed the 3.87 GiB that
+`--gpu-memory-utilization 0.80` was stranding: KV 4.33 → **8.05 GiB**, pool
+183,314 → **340,663 tokens**, concurrency at 128k 1.40× → **2.60×**, with decode,
+TTFT and a byte-identical greedy generation all unchanged — capacity is free
+because decode is bandwidth-bound. Three consequences worth carrying: the flag
+**overrides util entirely** (util stays only as the fallback), its byte value is
+**absolute and image-specific** so it must be re-derived on an image bump, and
+the CLI flag is `--kv-cache-memory-bytes` even though the engine's own log advises
+`--kv-cache-memory`. Full measurement and the re-derive procedure:
+[SCALER_NOTES.md](SCALER_NOTES.md) §3.
 
 The earlier `b3 → 0.26.0-b1` step *was* a vLLM *base* jump, 0.21.0 → 0.26.0. The
 supported-model table is nearly unchanged from `b3`: three rows added

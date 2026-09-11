@@ -74,7 +74,9 @@ services:
       # --enforce-eager caps compile buffers. It is RUNNER-SPECIFIC: V1 profiles a
       # different value (7117934592 -> 280,425 tok). To go back to util-based sizing,
       # comment this line OUT: a blank VLLM_KV_CACHE_MEMORY resolves to the default.
-      - "--kv-cache-memory=${VLLM_KV_CACHE_MEMORY:-8603448832}"
+      # Canonical spelling: the log advises --kv-cache-memory, which parses only
+      # as an argparse prefix abbreviation. ../UPSTREAM_VLLM_NOTES.md §10.3
+      - "--kv-cache-memory-bytes=${VLLM_KV_CACHE_MEMORY:-8603448832}"
       - "--reasoning-parser=${VLLM_REASONING_PARSER:-openai_gptoss}"
       - "--enable-auto-tool-choice"
       - "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-openai}"
