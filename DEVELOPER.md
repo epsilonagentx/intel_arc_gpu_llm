@@ -126,10 +126,11 @@ faster than the stock image. The single-stream decode baseline of **~60 tok/s**
 on the B60 (via `bench.sh`) was measured on `0.17.0-xpu`; re-baseline on the
 current `0.21.0-ubuntu24.04` stock image before comparing — that's the yardstick.
 **The engines no longer share a vLLM base.** They briefly did — both on 0.21.0,
-which the fork reached in `0.21.0-b1` — but the scaler pin moved to `0.26.0-b1`
-on 2026-09-02, taking the fork to a vLLM 0.26.0 base. A measured difference is
-again a mix of the fork's Arc-specific work *and* a five-minor-version engine
-gap, so attribute any win carefully.
+which the fork reached in `0.21.0-b1` — but the scaler pin moved to the 0.26.0
+line on 2026-09-02 (`0.26.0-b1`, then `-b2` on 2026-09-10), taking the fork to a
+vLLM 0.26.0 base. A measured difference is again a mix of the fork's
+Arc-specific work *and* a five-minor-version engine gap, so attribute any win
+carefully.
 
 **Why two folders, not a compose profile:** one GPU (~22.7 GiB) and gpt-oss-20b
 needs ~17 GiB, so the two engines can't coexist (~31 GiB = OOM). A separate
@@ -137,46 +138,56 @@ folder per engine means every `up` must target an engine's folder (cd into it,
 or `-f` its `compose.yaml`), so you can't start both by accident and "which
 engine is prod" is always explicit.
 
-**Image:** pinned to `intel/llm-scaler-vllm:0.26.0-b1` (its docs warn against
+**Image:** pinned to `intel/llm-scaler-vllm:0.26.0-b2` (its docs warn against
 `:latest`) — **boot-tested and validated** on the B60 with gpt-oss-20b at
-128k/0.80 eager on 2026-09-02. It is still a fresh, unannounced beta: the image
-was pushed 2026-09-02 and grew **5.18 GB → 7.78 GB**, yet the fork's
-`Releases.md` still names `0.21.0-b3.1` as its "Latest Release" and the floating
-`latest` tag still points at the b3.1-era image. `0.21.0-b3.1` (2026-08-13) is
-skipped. The running engine reports vLLM `0.26.1.dev0+g568afb3a1.d20260831` on
-`GET /version` — the quickest way to confirm which engine owns `:8000` without
-docker, since the stock image reports `0.21.0`.
+128k/0.80 eager on 2026-09-10. It is still an unannounced beta line: `latest`
+has not moved since 2026-08-13 and still resolves, digest for digest, to the
+`0.21.0-b3.1`-era image. `Releases.md` on `main` does now name `0.26.0-b2`, but
+the copy inside the b2 git tag still says `b1` — a tag's own release list is
+always one behind. The running engine reports vLLM
+`0.26.1.dev0+g568afb3a1.d20260907` on `GET /version` — the quickest way to
+confirm which engine owns `:8000` without docker, since the stock image reports
+`0.21.0`. Note that b1 and b2 share the fork commit `g568afb3a1` and differ only
+in that trailing build date, so use `docker inspect -f '{{.Config.Image}}'
+vllm-scaler` to tell the two *builds* apart.
 
-**This pin reversed the throughput regression and is the fastest image measured
-on the B60** — **85.6 tok/s** on `./bench.sh 400` at ~73 ms TTFT, which is +21.2%
-over `0.21.0-b3` and +5.9% over `0.14.0-b8.3.2`, the previous best. `smoke.sh` is
-ALL PASS, so the inherited parser flag names survived the base jump. The
+**This line reversed the throughput regression and is the fastest measured on the
+B60** — **85.6 tok/s** on `./bench.sh 400` at ~72 ms TTFT, +21.2% over
+`0.21.0-b3` and +5.9% over `0.14.0-b8.3.2`, the previous best. `smoke.sh` is ALL
+PASS, so the inherited parser flag names survived the base jump. The
 image-by-image table, the bench-hygiene rules that make those numbers comparable,
-and the KV-pool figures still outstanding on this pin are all in
-[SCALER_NOTES.md](SCALER_NOTES.md) §3.
+and the KV-pool figures are all in [SCALER_NOTES.md](SCALER_NOTES.md) §3.
 
-The jump is the vLLM *base*, not a patch level — `0.26.0-b1` moves the fork from
-vLLM 0.21.0 to 0.26.0. Its supported-model table is nearly unchanged from `b3`:
-three rows added (`Muse-Glimmer-30B`, `Qwen3.8-27B`, `Qwen3.8-27B-FP8`), none
-removed or changed, and none of the three fits a single B60. gpt-oss-20b/120b
-stay in the MXFP4 column, so support is retained; **no release in this line
-touches gpt-oss**, so any change in gpt-oss-20b behaviour comes from the newer
-base, not the fork's own commits.
+**b1 → b2 is a bug-fix release, and it is measurably a no-op here**: identical
+tok/s, TTFT, KV pool (183,314 tok / 1.40×) and VRAM budget, `smoke.sh` still ALL
+PASS. All four of its named fixes land in paths gpt-oss-20b does not use — MTP
+(which this model cannot run at all), `sym_int4`, and block-FP8. Take it as cheap
+insurance and expect no change; the reasoning is in
+[SCALER_NOTES.md](SCALER_NOTES.md) §2.
 
-Because the image changed, clear the `llm_vllm-scaler-cache` volume once before
-first boot (same practice as `vllm_xpu`'s `vllm-cache`). One version-coupled
-setting in `scaler/compose.yaml` remains **unverified** on this pin:
-`VLLM_QUANTIZE_Q40_LIB`, whose `.so` path was found by inspecting the b3 image —
-which has since grown ~50%, so it may have moved. It only bites if you pass
-`--quantization sym_int4`, which gpt-oss-20b does not (it is MXFP4, pre-quantised
-— do **not** pass `--quantization`). The other risk, the inherited
-`--reasoning-parser` / `--tool-call-parser` flag names, is now **cleared** by the
+The earlier `b3 → 0.26.0-b1` step *was* a vLLM *base* jump, 0.21.0 → 0.26.0. The
+supported-model table is nearly unchanged from `b3`: three rows added
+(`Muse-Glimmer-30B`, `Qwen3.8-27B`, `Qwen3.8-27B-FP8`), none removed or changed,
+none of the three fitting a single B60, and b2 adds nothing further — its whole
+README diff is *removals*. gpt-oss-20b/120b stay in the MXFP4 column, so support
+is retained; **no release in this line touches gpt-oss**, so any change in
+gpt-oss-20b behaviour comes from the newer base, not the fork's own commits.
+
+Two version-coupled settings in `scaler/compose.yaml` were re-checked against
+both 0.26.0 images on 2026-09-10 (method in [SCALER_NOTES.md](SCALER_NOTES.md)
+§7): `VLLM_QUANTIZE_Q40_LIB`'s `.so` path is **correct and unchanged**, closing a
+long-standing unknown, while `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` turned out to be
+**dead** — absent from both images and deleted from upstream's README at b2 — and
+has been removed from the file. Clearing `llm_vllm-scaler-cache` on an image bump
+is **not** needed on this engine: eager compiles nothing, so the volume holds
+16 KB of hash-guarded metadata. The remaining inherited risk, the
+`--reasoning-parser` / `--tool-call-parser` flag names, stays **cleared** by the
 passing `smoke.sh` above.
 
 **`--enforce-eager` is mandatory, not a safe default:** the config boots with
 `--enforce-eager`, which disables torch.compile — removing the uncapped Inductor
 buffer growth that constrains util on the stock image, so a higher util would be
-safe here (we keep 0.80 to match the base vLLM engine). Eager is normally slower
+safe here (0.80 is kept to match the base vLLM engine). Eager is normally slower
 than compiled, **but compiled mode was tested on 2026-07-03 and rejected**:
 without `--enforce-eager` the engine boots and compiles fine, then returns empty
 `content` *and* `reasoning` for gpt-oss-20b — a silent correctness failure with no

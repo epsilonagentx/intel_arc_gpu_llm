@@ -311,7 +311,7 @@ Host path: `/var/lib/docker/volumes/llm_<name>/_data`
 |--------|----------|-------|
 | `hf-cache` | HF model weights | Survives compose changes; **shared by both engines** (no re-download when you swap) |
 | `vllm-cache` | torch.compile + AOT artifacts (base engine) | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
-| `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`scaler/compose.yaml`) first boots |
+| `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`scaler/compose.yaml`) first boots. Stays near-empty — that engine runs `--enforce-eager`, so nothing is compiled, and it needs no clearing on an image bump |
 
 Open WebUI's data lives in its own project, so its volume is
 `open-webui_open-webui-data` (not `llm_*`) — see *Running Open WebUI (optional)*.
@@ -383,14 +383,20 @@ Why you might switch: the `llm-scaler` fork is tuned for Arc B-series and its
 image unlocks quantised-MoE paths that the stock image doesn't (e.g.
 `Qwen3-30B-A3B-GPTQ-Int4`, and the gemma-4 family since `0.21.0-b1`), and on this
 hardware it is currently also the **faster** of the two for gpt-oss-20b:
-`0.26.0-b1` measures **85.6 tok/s** single-stream on `./bench.sh 400` with ~73 ms
+`0.26.0-b2` measures **85.6 tok/s** single-stream on `./bench.sh 400` with ~72 ms
 TTFT, the best figure recorded here. Still benchmark before adopting — the win
 has to be measured on your own box, and note the two engines sit on **different
-vLLM bases** (scaler `0.26.0-b1` → vLLM 0.26.0, stock → 0.21.0), so a difference
+vLLM bases** (scaler `0.26.0-b2` → vLLM 0.26.0, stock → 0.21.0), so a difference
 mixes the fork's optimisations with an engine-version gap. Compare at equal
-`max_tokens` and discard the first run after a cold start, or the numbers lie;
-[SCALER_NOTES.md](SCALER_NOTES.md) has the full image-by-image table and the
-hygiene rules.
+`max_tokens` and discard the first run after a cold start *or after a long idle*,
+or the numbers lie; [SCALER_NOTES.md](SCALER_NOTES.md) has the full
+image-by-image table and the hygiene rules.
+
+Pinning the scaler is deliberate: **do not use `:latest`** on this image, which
+has pointed at a two-releases-old build since 2026-08-13. After changing the pin,
+re-run `./smoke.sh` before trusting the engine — and read the boot log for the
+new KV-pool figures, since `/metrics` does not expose them (commands in
+[SCALER_NOTES.md](SCALER_NOTES.md) §3).
 
 The scaler config boots with `--enforce-eager` and **must stay that way** for
 gpt-oss-20b: compiled mode was tested and returns empty output (a silent

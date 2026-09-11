@@ -22,34 +22,42 @@ single **Intel Arc Pro B60 (24 GB)** serving `gpt-oss-20b` unless stated.
 
 1. **Intel's documentation is linked, never copied.** Anything upstream already
    documents — supported models, reference commands, env-var meanings — is a URL
-   below, so it cannot go stale here. What this file records is what *we*
-   measured on *this* hardware, and where our findings differ from the docs.
+   below, so it cannot go stale here. What this file records is what was
+   **measured on this hardware**, and where those findings differ from the docs.
 2. **Every tested configuration names the full image tag and the date tested,**
    and says explicitly whether it has been re-tested on the current pin. A number
    without an image tag is not a result.
 
 ## Upstream documentation
 
-Primary reference, pinned to the git tag matching our image so it cannot drift:
-**[llm-scaler vLLM README @ `vllm-0.26.0-b1`](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md)**
+Primary reference, pinned to the git tag matching the running image so it
+cannot drift:
+**[llm-scaler vLLM README @ `vllm-0.26.0-b2`](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md)**
+
+⚠ **The b2 README is 116 lines *shorter* than b1's.** Diffed 2026-09-10: 116
+lines removed, **zero added**. Deleted upstream: §2.11 Load Balancer,
+§4.2 "Out-of-memory while online quantization", the oneAPI-sourcing note, and all
+nine mentions of `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` (§7). b2's README is
+byte-identical to `main`'s, so this is current upstream intent, not a stale tag
+cut. Nothing was added — the supported-models table is unchanged from b1.
 
 | Topic | Link |
 |-------|------|
-| Supported models table | [§3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#3-supported-models) |
-| INT4 / FP8 online quantisation | [§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#22-int4-and-fp8-quantized-online-serving) |
-| Pulling / running the container | [§1.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#13-pulling-and-running-the-vllm-docker-container) |
-| Finding maximum context length | [§2.7](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#27-finding-maximum-context-length) |
-| gemma-4 / diffusiongemma reference commands | [§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma) |
-| FP8 KV cache | [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#35-fp8-kv-cache) |
-| MTP (speculative decoding) | [§3.6](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#36-mtp-enable) |
-| OOM during online quantisation | [§4.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#42-out-of-memory-while-online-quantization) |
-| Performance tuning / NUMA | [§5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#5-performance-tuning) |
+| Supported models table | [§3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#3-supported-models) |
+| INT4 / FP8 online quantisation | [§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#22-int4-and-fp8-quantized-online-serving) |
+| Pulling / running the container | [§1.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#13-pulling-and-running-the-vllm-docker-container) |
+| Finding maximum context length | [§2.7](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#27-finding-maximum-context-length) |
+| gemma-4 / diffusiongemma reference commands | [§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma) |
+| FP8 KV cache | [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#35-fp8-kv-cache) |
+| MTP (speculative decoding) | [§3.6](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#36-mtp-enable) |
+| Performance tuning / NUMA | [§5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#5-performance-tuning) |
+| ~~OOM during online quantisation~~ | **§4.2 deleted at b2.** Last version that had it: [`vllm-0.26.0-b1` §4.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#42-out-of-memory-while-online-quantization) |
 
 Other upstream sources:
 
 | | |
 |---|---|
-| Latest docs (may be **ahead** of our pin) | <https://github.com/intel/llm-scaler/blob/main/vllm/README.md> |
+| Latest docs (may be **ahead** of the pin here) | <https://github.com/intel/llm-scaler/blob/main/vllm/README.md> |
 | Image release list | <https://github.com/intel/llm-scaler/blob/main/Releases.md> |
 | FAQ | <https://github.com/intel/llm-scaler/blob/main/vllm/FAQ.md> |
 | Known issues | <https://github.com/intel/llm-scaler/blob/main/vllm/KNOWN_ISSUES.md> |
@@ -62,52 +70,86 @@ Other upstream sources:
 
 | | |
 |---|---|
-| Image | `intel/llm-scaler-vllm:0.26.0-b1` |
-| Base | vLLM 0.26.0 (engine reports `0.26.1.dev0+g568afb3a1.d20260831`) |
+| Image | `intel/llm-scaler-vllm:0.26.0-b2` |
+| Base | vLLM 0.26.0 (engine reports `0.26.1.dev0+g568afb3a1.d20260907`) |
 | Model | `openai/gpt-oss-20b`, served as `gpt-oss-20b` |
 | Context / util | `--max-model-len 131072` (128k) / `--gpu-memory-utilization 0.80` |
 | Boot mode | `--enforce-eager` — **mandatory**, see §4 |
-| Status | Boot-tested and validated 2026-09-02; re-validated after the 2026-09-03 XPU-graph experiment (§4) — config unchanged |
+| Status | Boot-tested and validated 2026-09-10: `smoke.sh` ALL PASS, 85.6 tok/s, KV pool and VRAM budget byte-identical to b1 (§3) |
 
 **Which engine owns `:8000`?** `curl -s localhost:8000/version`. The scaler
 reports `0.26.1.dev0…`; the stock `vllm_xpu` image reports `0.21.0`. Useful
 because three different stacks on this host can claim that port, and a benchmark
 against the wrong one is worse than no benchmark.
 
+⚠ **That check does not separate b1 from b2.** Both report the same fork commit
+`g568afb3a1` — only the trailing build date differs (`d20260831` = b1,
+`d20260907` = b2). To confirm *which build* is running, read the image tag:
+`docker inspect -f '{{.Config.Image}}' vllm-scaler`.
+
 ---
 
 ## 2. Image pin provenance
 
-Upstream says **do not use `:latest`**. On this project you additionally cannot
-trust `latest` *or* the release notes to tell you what is newest — verified
-2026-09-02 against the Docker Hub tag API and `git ls-remote --tags`:
+Upstream says **do not use `:latest`**, and on this project `latest` is badly
+stale — verified against the Docker Hub tag API, 2026-09-10:
 
-| | |
-|---|---|
-| `intel/llm-scaler-vllm:0.26.0-b1` pushed | 2026-09-02, 7.78 GB compressed (b3 was 5.18 GB) |
-| `Releases.md` says "Latest Release" | `0.21.0-b3.1` — on both `main` **and** the `vllm-0.26.0-b1` git tag |
-| `latest` resolves to | the `0.21.0-b3.1`-era image |
-| Skipped | `0.21.0-b3.1` (2026-08-13) |
+| Tag | Pushed | Compressed | Digest |
+|---|---|---|---|
+| **`0.26.0-b2`** (current pin) | **2026-09-08** | **7.78 GB** | `sha256:52218ad8…` |
+| `0.26.0-b1` (previous pin) | 2026-09-02 | 7.78 GB | `sha256:70e7eafd…` |
+| `0.21.0-b3.1` | 2026-08-13 | 5.18 GB | `sha256:032916bd…` |
+| `latest` | 2026-08-13 | 5.18 GB | `sha256:032916bd…` — **= `0.21.0-b3.1`** |
 
-So our pin is an **undocumented beta**. Check
+`latest` has not moved in two releases and still resolves to the b3.1-era image,
+digest for digest. Check
 [the tag list](https://hub.docker.com/r/intel/llm-scaler-vllm/tags) for ground
-truth, not [`Releases.md`](https://github.com/intel/llm-scaler/blob/main/Releases.md).
+truth.
 
-The jump from `0.21.0-b3` is the vLLM **base**, not a patch level: 0.21.0 →
-0.26.0. **Side effect:** the stock engine is still on 0.21.0, so the two engines
-no longer share a base and a base-vs-scaler A/B is confounded by a five-minor
-engine gap again — the opposite of why the 0.21.0 bump was originally taken.
+**`Releases.md` caught up at b2, but only on `main`.** At b1 it named
+`0.21.0-b3.1` as "Latest Release" on both `main` and the release's own git tag.
+Now `main`'s copy names `0.26.0-b2` and there is a real
+[GitHub release page](https://github.com/intel/llm-scaler/releases/tag/vllm-0.26.0-b2)
+(published 2026-09-09, marked pre-release) — but the copy *inside* the
+`vllm-0.26.0-b2` tag still says `0.26.0-b1`. A tag's own `Releases.md` is always
+one release behind; read [`main`'s](https://github.com/intel/llm-scaler/blob/main/Releases.md).
+
+### What b2 changes — and why none of it reaches this config
+
+b2 is a **bug-fix release on the same vLLM 0.26.0 base**, not a base jump. Its
+[release notes](https://github.com/intel/llm-scaler/releases/tag/vllm-0.26.0-b2)
+list five items; all four specific ones are in paths gpt-oss-20b does not use:
+
+| Upstream fix | Reaches this config? |
+|---|---|
+| Fix prefix caching with MTP | **No** — prefix caching is on, but MTP is not (and cannot be, §9) |
+| Improve MTP decoding performance | **No** — same reason |
+| Fix incorrect output for `sym_int4` models | **No** — gpt-oss-20b is pre-quantised MXFP4, so `--quantization` is never passed |
+| Fix block-FP8 output corruption during concurrent decoding | **No** — not a block-FP8 checkpoint, and `--kv-cache-dtype` is unset (§8.2) |
+| "Bug fixes" | Unspecified |
+
+Measurement agrees: b2 is **neutral on every axis tracked here** — same tok/s,
+same TTFT, same KV pool, same VRAM budget, `smoke.sh` still ALL PASS (§3). So
+take b2 as cheap insurance, not an upgrade, and **expect no measurable change**. It
+does matter if this engine ever serves `sym_int4` or a block-FP8 checkpoint, both
+of which had silent-wrong-output bugs until now.
+
+The earlier jump from `0.21.0-b3` *was* a vLLM **base** change, 0.21.0 → 0.26.0.
+**Side effect, still live:** the stock engine is on 0.21.0, so the two engines do
+not share a base and a base-vs-scaler A/B is confounded by a five-minor engine
+gap — the opposite of why the 0.21.0 bump was originally taken.
 
 No release in this line contains a gpt-oss fix (the notes are all Qwen3.6 /
 gemma-4 / Muse-Glimmer / diffusiongemma work), yet gpt-oss-20b got ~19–21%
-faster — so that win comes from the newer base, not the fork's own commits.
+faster at b1 — so that win came from the newer base, not the fork's own commits.
 
 **Supported models:** read the live table at
-[§3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#3-supported-models)
-rather than a copy here. What our own diff of that table found (b3 →
-`0.26.0-b1`): only **3 rows added** (`Muse-Glimmer-30B`, `Qwen3.8-27B`,
-`Qwen3.8-27B-FP8`), none removed or changed, and none of the three fits a single
-B60. gpt-oss-20b/120b remain in the MXFP4 column, so our model stays supported.
+[§3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#3-supported-models)
+rather than a copy here. b2 adds **nothing** to it — the whole b1 → b2 README
+diff is removals. The earlier b3 → b1 diff added only **3 rows**
+(`Muse-Glimmer-30B`, `Qwen3.8-27B`, `Qwen3.8-27B-FP8`), none removed or changed,
+and none of the three fits a single B60. gpt-oss-20b/120b remain in the MXFP4
+column, so the served model stays supported.
 
 ---
 
@@ -122,11 +164,18 @@ All figures are **eager** (compiled is not an option — §4), single-stream via
 |------------------|-------------|----------------|----------------|----------------|------|
 | `intel/llm-scaler-vllm:0.14.0-b8.3.2` | 2026-07-03 | 64k / 0.75 | 80.8 tok/s | — | 109 ms |
 | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | 128k / 0.80 | 70.6 tok/s | 72.0 tok/s | ~81–92 ms |
-| **`intel/llm-scaler-vllm:0.26.0-b1`** | **2026-09-02** | 128k / 0.80 | **85.6 tok/s** | **86.0 tok/s** | **~73 ms** |
+| `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-02 | 128k / 0.80 | 85.6 tok/s | 86.0 tok/s | ~73 ms |
+| **`intel/llm-scaler-vllm:0.26.0-b2`** | **2026-09-10** | 128k / 0.80 | **85.6 tok/s** | **86.1 tok/s** | **~72 ms** |
 
-`0.26.0-b1` is **+21.2% over b3** and **+5.9% over b8.3.2** (the previous best),
+`0.26.0-b1` was **+21.2% over b3** and **+5.9% over b8.3.2** (the previous best),
 so the ~10–12.6% regression that made b3 a hard sell is **gone**. Raw runs:
 85.6 / 84.3 / 85.6 @400 and 86.0 / 86.0 / 86.0 @200.
+
+**b2 = b1, to the last digit.** Raw runs 85.6 / 85.6 / 85.6 @400 (run 1 cold at
+84.3, discarded) and 86.1 / 86.1 @200 (run 1 cold at 86.0). The +0.1 @200 is one
+extra chunk on a 197-chunk stream — noise, not a win. Zero change is the
+*expected* result given b2's release notes (§2), and it is the useful kind of
+result: it says the bug-fix release did not quietly cost anything either.
 
 ⚠ The b8.3.2 row was measured at a **different context/util profile** (64k/0.75
 vs 128k/0.80), so treat b8.3.2-vs-later as indicative, not matched. The
@@ -138,13 +187,21 @@ b3-vs-`0.26.0-b1` comparison *is* matched on every axis.
 |------------------|-------------|---------|-----------|---------|--------------------------|
 | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | 12.87 GiB / 7.68 s | 5.46 GiB | 234,645 tok | 1.79× |
 | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-03 | 12.87 GiB / 7.28 s | **4.33 GiB** | **183,314 tok** | **1.40×** |
+| `intel/llm-scaler-vllm:0.26.0-b2` | 2026-09-10 | 12.87 GiB / 7.65 s | **4.33 GiB** | **183,314 tok** | **1.40×** |
+
+b2's boot log reproduces b1's budget line for line — same weights, same peak
+activation (0.80 GiB), same non-torch (1.12 GiB), same 0.00 GiB CUDAGraph, same
+pool to the token. The only digits that moved are load time (7.65 s vs 7.28 s,
+disk noise) and the advised "fully utilize" byte value, `8647520256` vs b1's
+`8647532544` — 12 KiB apart, i.e. 8.05 GiB either way.
 
 For context, the stock `intel/vllm:0.21.0-ubuntu24.04` engine reports a 221k pool
 / 1.69× at the same profile, so the fork sized its KV pool slightly *larger* on
 the same base. The b3 boot also confirmed 1 XPU enumerated,
 `Intel(R) Arc(TM) Pro B60 Graphics`, 23.9 GiB.
 
-The `0.26.0-b1` VRAM budget, read from its boot log (`gpu_worker.py:857`):
+The VRAM budget, read from the boot log (`gpu_worker.py:857`) — identical on b1
+(2026-09-03) and b2 (2026-09-10):
 
 | Item | Value |
 |------|-------|
@@ -171,9 +228,13 @@ same log line ends:
 
 ```
 Replace gpu_memory_utilization config with `--kv-cache-memory=4496187392`
-(4.19 GiB) to fit into requested memory, or `--kv-cache-memory=8647532544`
+(4.19 GiB) to fit into requested memory, or `--kv-cache-memory=8647520256`
 (8.05 GiB) to fully utilize gpu memory.
 ```
+
+(b2's byte value, read 2026-09-10; b1 printed `8647532544`. Re-read this line
+after any image bump rather than carrying a byte value forward — it comes from
+*that* build's memory profile.)
 
 8.05 GiB of KV is 1.86× today's 4.33 GiB — the same order of capacity gain as
 `--kv-cache-dtype fp8` (§8.2), without fp8's accuracy question. Reaching it needs
@@ -185,11 +246,12 @@ carried over from the stock engine does **not** bind here: eager reserves no
 Inductor or CUDAGraph buffers, and the 0.00 GiB row above is the proof (§4).
 
 `GET /metrics` does **not** expose pool size on this build (only
-`kv_cache_usage_perc`), so the two missing cells still need a boot-log read:
+`kv_cache_usage_perc`), so those figures always need a boot-log read — run this
+from the repo root after any image bump:
 
 ```bash
 docker compose -f scaler/compose.yaml logs \
-  | grep -E "KV cache size|Maximum concurrency|Model loading took"
+  | grep -E "KV cache size|Maximum concurrency|Model loading took|gpu_worker.py:857"
 ```
 
 ### Correctness
@@ -198,11 +260,21 @@ docker compose -f scaler/compose.yaml logs \
 |------------------|-------------|------------|-------|
 | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | ALL PASS | `message.reasoning` 835 chars |
 | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-02 | ALL PASS | `message.reasoning` 1082 chars; confirms the inherited `--reasoning-parser` / `--tool-call-parser` names survived the base jump |
+| `intel/llm-scaler-vllm:0.26.0-b2` | 2026-09-10 | ALL PASS | `message.reasoning` 342 chars — a *third* of b1's on the identical `temperature: 0` prompt |
 
 `smoke.sh` checks four things: served model name, non-empty content, a populated
 `message.reasoning`, and a `get_weather` tool_call.
 
-### Bench hygiene — this has bitten us twice
+⚠ **Reasoning length is not a stable fingerprint across builds.** b3 gave 835
+chars, b1 1082, b2 342 — same prompt, same `temperature: 0`. Determinism
+*within* a build is evidenced (b1 reproduced 1082 exactly across the XPU-graph
+test's two boots, §4); across builds it does not hold, most likely because one
+differing kernel result flips an argmax and reroutes the whole chain of thought —
+that mechanism is inferred, not measured. Either way, treat the number as
+"populated / not populated". For a real regression check, `diff` a saved
+reference generation on the **same** image (§4, step 4).
+
+### Bench hygiene — each of these has already produced a wrong number
 
 - **`bench.sh` reports `total_chunks / decode_time`, not true tokens/s.** A
   longer budget can therefore score *lower* on the same engine: b3 gave 72.0
@@ -211,8 +283,12 @@ docker compose -f scaler/compose.yaml logs \
   the ~10% first quoted.
 - **Always discard run 1 after a cold start.** On b3 the first request after
   startup measured 57.5 tok/s — warm-up, not the engine's speed.
-- `0.26.0-b1` is nearly budget-flat (85.6 @400 vs 86.0 @200), so this trap
+- `0.26.0-b1`/`-b2` are nearly budget-flat (85.6 @400 vs 86.1 @200), so this trap
   matters mostly when comparing *across* images.
+- **A long-idle container is still a cold first run.** b2 had been up ~25 min,
+  healthy and idle, and its first `bench.sh 400` still came in low (84.3, TTFT
+  90 ms) before settling at 85.6 / 72 ms. Discard run 1 after *idleness*, not
+  just after a boot.
 
 ---
 
@@ -220,9 +296,10 @@ docker compose -f scaler/compose.yaml logs \
 
 | Configuration | Image (full tag) | Date tested | Result |
 |---------------|------------------|-------------|--------|
-| `--enforce-eager` (current) | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-02 | Correct output, 85.6 tok/s |
+| `--enforce-eager` (current) | `intel/llm-scaler-vllm:0.26.0-b2` | 2026-09-10 | Correct output, 85.6 tok/s |
+| `--enforce-eager` | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-02 | Correct output, 85.6 tok/s |
 | **no** `--enforce-eager` (torch.compile ON) | `intel/llm-scaler-vllm:0.14.0-b8.3.2` | 2026-07-03 | **Rejected — silently empty output** |
-| no `--enforce-eager` | `:0.21.0-b3`, `:0.26.0-b1` | **not re-tested** | — |
+| no `--enforce-eager` | `:0.21.0-b3`, `:0.26.0-b1`, `:0.26.0-b2` | **not re-tested** | — |
 
 Dropping `--enforce-eager` boots and compiles fine (~80 s) but then generates
 **empty output** — `completion_tokens` increment while both `content` and
@@ -235,8 +312,8 @@ Consequences:
 - Every tok/s figure in §3 is an eager number and is the engine's **real** speed
   — not an under-statement, because compiled is not an option here.
 - Eager disables torch.compile, so there is no compile-buffer growth and util is
-  **not** constrained by Inductor buffers on this engine. 0.85 would be safe; we
-  use 0.80 to match the stock engine (raised from 0.75 on 2026-07-08, once the
+  **not** constrained by Inductor buffers on this engine. 0.85 would be safe;
+  0.80 is kept to match the stock engine (raised from 0.75 on 2026-07-08, once the
   B60 stopped driving displays). The `0.26.0-b1` boot log now quantifies that
   headroom — §3.
 - The base is five minors newer than the image that failed, which *might* change
@@ -252,6 +329,11 @@ gpt-oss-20b is MXFP4 (pre-quantised) — **do not pass `--quantization`**.
 |---------------|------------------|-------------|--------|
 | `VLLM_XPU_ENABLE_XPU_GRAPH=1` + `--enforce-eager` | `intel/llm-scaler-vllm:0.26.0-b1` | 2026-09-03 | **No effect. Accepted, changed nothing, reverted.** |
 | `VLLM_XPU_ENABLE_XPU_GRAPH=1` without `--enforce-eager` | — | **not tested** | Would reintroduce the empty-output risk above |
+
+**Carried over to `0.26.0-b2` unretested, and that is defensible:** b2's boot log
+prints the same three gate lines verbatim (below), the variable is still absent
+from b2's README, and b2 changed nothing measurable (§2/§3). Nothing in the
+release notes touches the graph path.
 
 The variable **is** read — setting it removes the `xpu.py:285` warning — but
 nothing downstream changes. Measured against a same-boot baseline on the same
@@ -287,7 +369,8 @@ auditable if a later image changes the picture.
 
 #### Background
 
-Read from the `0.26.0-b1` boot log, 2026-09-03. Three gates are logged, not one:
+Read from the `0.26.0-b1` boot log, 2026-09-03, and unchanged in b2's
+(re-read 2026-09-10). Three gates are logged, not one:
 
 ```
 WARNING [vllm.py:1172] Enforce eager set, disabling torch.compile and CUDAGraphs.
@@ -314,17 +397,18 @@ spend.
 
 **Why it looked worth testing.** The `xpu.py:285` wording implied the variable
 could be set **while keeping `--enforce-eager`** — correctness guarantee retained,
-only graph replay added — which would have made it the one remaining
-decode-*speed* lever besides MTP (fp8 KV and `--kv-cache-memory` buy concurrency,
-not speed). The measurement above shows the wording was misleading: the variable
-is accepted under eager and does nothing.
+only graph replay added — which would have made it the **last** decode-*speed*
+lever on this engine (fp8 KV and `--kv-cache-memory` buy concurrency, not speed;
+MTP turned out not to be available for gpt-oss-20b at all, §9). The measurement
+above shows the wording was misleading: the variable is accepted under eager and
+does nothing.
 
 **What the test cost, for calibration:** two container recreates, ~40 s boot each,
 about 20 minutes end to end including baselines. Cheap enough to be worth
 resolving even at low odds, which is the only reason it was run.
 
 **Upstream documents none of it.** The variable appears neither in
-[the pinned README](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md)
+[the pinned README](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md)
 nor in [`main`'s](https://github.com/intel/llm-scaler/blob/main/vllm/README.md) —
 both checked 2026-09-03. The only published mention is the `0.21.0-b1` release
 note ("experimentally support XPU graph"); the string itself lives in the image,
@@ -380,12 +464,23 @@ exposes are harmless — they are not SYCL XPUs, so there is no wrong-GPU risk.
   project name, so gpt-oss-20b's ~13 GB of weights are reused, not
   re-downloaded. `docker volume rm llm_hf-cache` would delete the gpt-oss
   weights too — prune selectively if reclaiming space.
-- **`vllm-scaler-cache` is separate** because compiled kernels are
-  image-version-specific. **Clear it once after any image bump** — from
-  `scaler/`: `docker compose down`, then
-  `docker volume rm llm_vllm-scaler-cache`. Running eager means little is cached
-  there anyway, but stale kernels from a different vLLM base are not worth
-  debugging.
+- **`vllm-scaler-cache` is separate** from `vllm_xpu`'s `vllm-cache` because
+  compiled kernels are image-version-specific.
+
+  **Earlier advice to clear it on every image bump is over-cautious — measured
+  2026-09-10 and corrected.** Under `--enforce-eager` nothing is ever compiled,
+  so the volume holds **16 KB**: two `modelinfos/*.json` files (gpt-oss and
+  Gemma4 architecture metadata) and no kernels at all. Each carries a `hash` of
+  the model source file, so a changed image invalidates its own entries —
+  proven by b2 booting correctly on b1-era files. Inventory it yourself rather
+  than trusting either claim:
+
+  ```bash
+  docker run --rm -v llm_vllm-scaler-cache:/v:ro alpine sh -c 'du -sh /v; find /v -type f'
+  ```
+
+  If `--enforce-eager` is ever dropped (§4), this reasoning expires: compiled
+  artifacts *would* land here and *would* need clearing on an image bump.
 
 ---
 
@@ -393,20 +488,32 @@ exposes are harmless — they are not SYCL XPUs, so there is no wrong-GPU risk.
 
 `ZES_ENABLE_SYSMAN`, `SYCL_CACHE_PERSISTENT`,
 `VLLM_WORKER_MULTIPROC_METHOD=spawn` and `shm_size: 32g` follow upstream's
-recommendations — see [§1.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#13-pulling-and-running-the-vllm-docker-container).
-`VLLM_QUANTIZE_Q40_LIB`, `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` and
-`VLLM_ALLOW_LONG_MAX_MODEL_LEN` are the online-quantisation set, documented at
-[§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#22-int4-and-fp8-quantized-online-serving)
-and [§4.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#42-out-of-memory-while-online-quantization);
-all three are **inert for gpt-oss-20b**, which is pre-quantised MXFP4.
+recommendations — see [§1.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#13-pulling-and-running-the-vllm-docker-container).
+`VLLM_QUANTIZE_Q40_LIB` and `VLLM_ALLOW_LONG_MAX_MODEL_LEN` are the
+online-quantisation set, documented at
+[§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#22-int4-and-fp8-quantized-online-serving);
+both are **inert for gpt-oss-20b**, which is pre-quantised MXFP4.
 
-Only the parts where our experience **differs from the docs** are recorded here:
+Only the parts where **behaviour here differs from the docs** are recorded:
 
-| Variable | Our finding | Verified |
+| Variable | Finding | Verified |
 |----------|-------------|----------|
-| `VLLM_QUANTIZE_Q40_LIB` | The path in Intel's README (`/usr/local/lib/python3.12/dist-packages/…`) is **wrong for this image line** and crash-loops the engine with "cannot open shared object file". The working path is under `/opt/venv/…`, found by `find` inside the image. | `:0.21.0-b3`, 2026-08-12. ⚠ **Unverified on `:0.26.0-b1`**, which grew ~50% — re-check before using `sym_int4`. |
+| `VLLM_QUANTIZE_Q40_LIB` | The path in Intel's README (`/usr/local/lib/python3.12/dist-packages/…`) is **wrong for this image line** and crash-loops the engine with "cannot open shared object file". The working path, which the compose file sets, is `/opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so`. | `:0.21.0-b3`, 2026-08-12. ✅ **Re-verified on `:0.26.0-b1` and `:0.26.0-b2`, 2026-09-10** — same path, 15,216 bytes, and the variable is still live in `vllm/envs.py` + `quantization/sym_int4.py`. b2's README still prints the wrong `dist-packages` path. |
+| `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` | ☠ **Dead — removed from the compose file 2026-09-10.** Zero references anywhere in either 0.26.0 image (searched `/opt/venv`, `/llm`, `/root/.bashrc`, `/usr/local/bin`), and upstream deleted all nine mentions plus §4.2 from the README at b2. It was a live knob on the 0.21.0 line; the 0.26.0 base dropped it, so it was already a silent no-op under b1. | Both images searched 2026-09-10 |
 | `HF_TOKEN` | Not needed for current models: `google/gemma-4-26B-A4B-it` is `gated: false`, apache-2.0 (unlike gemma 2/3). Kept as value-only passthrough so the file carries no secret and empty means anonymous. | HF API, 2026-08-12 |
-| `VLLM_XPU_ENABLE_XPU_GRAPH` | **Deliberately not set — tested and it does nothing under `--enforce-eager`** (§4). Undocumented upstream in both the pinned and `main` READMEs; exists only in the image and one release note. The `xpu.py:285` warning recommending it is **safe to ignore** and will appear on every boot. | Measured on `:0.26.0-b1`, 2026-09-03 |
+| `VLLM_XPU_ENABLE_XPU_GRAPH` | **Deliberately not set — tested and it does nothing under `--enforce-eager`** (§4). Undocumented upstream in both the pinned and `main` READMEs; exists only in the image and one release note. The `xpu.py:285` warning recommending it is **safe to ignore** and will appear on every boot. | Measured on `:0.26.0-b1`, 2026-09-03; warning re-confirmed on b2 |
+
+**The re-check that found the dead variable, reusable on any image bump** — an
+env var set on the wrong image line is either a crash or, worse, a silent no-op:
+
+```bash
+docker run --rm --entrypoint /bin/bash intel/llm-scaler-vllm:0.26.0-b2 -lc '
+  ls -la /opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so
+  grep -rl VLLM_QUANTIZE_Q40_LIB /opt/venv/lib/python3.12/site-packages/vllm | head'
+```
+
+Swap in each variable the compose file sets. No hit in the image means no code
+reads it.
 
 ---
 
@@ -418,7 +525,7 @@ Only the parts where our experience **differs from the docs** are recorded here:
 |-----------------|------------------|-------------|--------|
 | `Intel/gemma-4-26B-A4B-it-int4-AutoRound` + `--quantization gptq` / `moe_wna16` | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | ❌ `NotImplementedError: No Unquantized MoE backend…` — wall 1 |
 | `google/gemma-4-26B-A4B-it` + `--quantization sym_int4` (upstream's documented route) | `intel/llm-scaler-vllm:0.21.0-b3` | 2026-08-12 | ❌ `RuntimeError: unable to mmap 49907246508 bytes` — wall 2, host RAM |
-| either route | `intel/llm-scaler-vllm:0.26.0-b1` | **not attempted** | — |
+| either route | `intel/llm-scaler-vllm:0.26.0-b1`, `:0.26.0-b2` | **not attempted** | — |
 
 Two independent walls, and the second is the real one.
 
@@ -435,7 +542,7 @@ whatever `--quantization` says, then asks for an XPU backend for an unquantised
 fused-MoE, and there is none. No `--quantization` value fixes it.
 
 **Wall 2 — host RAM, and this one is decisive.** Upstream's documented route
-([§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#22-int4-and-fp8-quantized-online-serving))
+([§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#22-int4-and-fp8-quantized-online-serving))
 is `--quantization sym_int4` on Google's original checkpoint, which fails before
 touching the GPU:
 
@@ -462,12 +569,13 @@ a pre-quantised normally-sharded checkpoint.
   so `gptq`/`moe_wna16` accept them. The label was the only mismatch; loading
   was never what failed.
 
-**Status on `0.26.0-b1`:** the upstream support row for this model is
+**Status on `0.26.0-b1` and `-b2`:** the upstream support row for this model is
 byte-identical to b3 — online fp8/int4 only, no offline column, and still no
-reference command. Upstream publishes gemma-4 commands only for
+reference command (b2 added a "MTP supported" note to the row, nothing else).
+Upstream publishes gemma-4 commands only for
 `gemma-4-12B-it` (TP=1) and `diffusiongemma-26B-A4B-it` (TP=2), never for
 `gemma-4-26B-A4B-it`; see
-[§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma)
+[§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma)
 for the current commands rather than trusting a copy here.
 
 One new lever, **low confidence**: vLLM 0.26.0's registry adds `auto_gptq` and
@@ -477,7 +585,7 @@ failure was in MoE *construction*, so this only helps if the fork now ships a
 quantised-Gemma4 MoE XPU kernel. Not pursued.
 
 `gemma-4-12B-it` remains the plausible single-B60 gemma-4 path — dense and TP=1
-in upstream's own reference command ([§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma)).
+in upstream's own reference command ([§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma)).
 Untested here.
 
 ### 8.2 `--kv-cache-dtype fp8` — worked, then reverted by decision
@@ -486,15 +594,15 @@ Tested on `intel/llm-scaler-vllm:0.21.0-b3`, **2026-08-21**. It worked and cost
 nothing measurable — but the flag is **not currently set**, and has **not** been
 re-tested on the current pin.
 
-| Metric | b3 without the flag | b3 **with** `--kv-cache-dtype fp8` | `0.26.0-b1` |
-|--------|---------------------|------------------------------------|-------------|
+| Metric | b3 without the flag | b3 **with** `--kv-cache-dtype fp8` | `0.26.0-b1` / `-b2` |
+|--------|---------------------|------------------------------------|---------------------|
 | GPU KV cache size | 234,645 tok | **469,354 tok** (exactly 2.0×) | not re-tested |
 | Max concurrency @131,072 | 1.79× | **3.58×** | not re-tested |
 | KV memory | 5.46 GiB | 5.46 GiB | not re-tested |
 | `bench.sh 200` | 72.0 tok/s | 72.0 tok/s (**unchanged**) | not re-tested |
 | `bench.sh 400` | 70.6 tok/s | 70.6 tok/s | not re-tested |
 | `smoke.sh` | ALL PASS | ALL PASS | not re-tested |
-| Attention backend | `FLASH_ATTN` | `FLASH_ATTN` (no silent Triton fallback) | not re-tested |
+| Attention backend | `FLASH_ATTN` | `FLASH_ATTN` (no silent Triton fallback) | `FLASH_ATTN`, FA2 — re-confirmed in b2's boot log |
 
 Both b3 columns are from the same image, days apart; the flag was added,
 measured, then removed. Removed because it did not touch the ~10% decode
@@ -502,38 +610,62 @@ regression being chased at the time — it buys **concurrency, not speed**. That
 regression is gone as of `0.26.0-b1`, so the only remaining motive for fp8 KV is
 long-context concurrency.
 
+⚠ **b2 changes the risk calculus slightly:** its release notes fix "block-FP8
+output corruption during concurrent decoding". That is weight quantisation, not
+`--kv-cache-dtype`, so it is not a fix *for* this flag — but it is a reminder
+that the fork's fp8 paths were carrying concurrency bugs through the b1 pin. If
+fp8 KV is ever re-added, validate it under actual concurrent load, not just
+`bench.sh`'s single stream.
+
 If re-added, validate on a **real long prompt** first: vLLM warns that fp8 KV may
 cause accuracy loss without a proper scaling factor, and `smoke.sh`'s four
 shallow checks do not clear that. Upstream guidance:
 [vLLM quantized KV cache](https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache.html)
-and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#35-fp8-kv-cache).
+and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#35-fp8-kv-cache).
 
-### 8.3 Two dead ends, so nobody re-treads them
+### 8.3 Three dead ends, so nobody re-treads them
 
 | Idea | Verdict | Basis |
 |------|---------|-------|
-| Enable "flash attention" | **Already on — not a lever.** There is no `--flash-attn` flag in vLLM (that is llama.cpp's `-fa`). `platforms/xpu.py` already selects `FLASH_ATTN` (FlashAttention 2, KV block size 64, NHD layout) with no flag from us. | Read from `platforms/xpu.py` in the running b3 container, 2026-08-21 |
+| Enable "flash attention" | **Already on — not a lever.** There is no `--flash-attn` flag in vLLM (that is llama.cpp's `-fa`). `platforms/xpu.py` already selects `FLASH_ATTN` (FlashAttention 2, KV block size 64, NHD layout) with no flag set here. | Read from `platforms/xpu.py` in the running b3 container, 2026-08-21 |
 | Switch to `TRITON_ATTN` | **Downgrade.** The only other non-MLA option, and that same source file calls it the old fallback; FA2 measured ~19% faster decode TPOT than Triton on B-series. | same |
-| `--kv-cache-dtype turboquant_*` (`k8v4` / `4bit_nc` / `k3v4_nc` / `3bit_nc`) | **Ruled out.** Routes to a separate TURBOQUANT backend and costs 20–60% throughput, in exchange for capacity we do not need. | [vLLM quantized KV cache](https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache.html) |
+| `--kv-cache-dtype turboquant_*` (`k8v4` / `4bit_nc` / `k3v4_nc` / `3bit_nc`) | **Ruled out.** Routes to a separate TURBOQUANT backend and costs 20–60% throughput, in exchange for capacity this deployment does not need. | [vLLM quantized KV cache](https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache.html) |
 
 ---
 
 ## 9. Open items
 
+- **`--kv-cache-memory` instead of util for pool sizing (§3) — the priority.**
+  The engine reports 8.05 GiB available against 4.33 GiB in use, i.e. ~1.86×
+  concurrency for free, no fp8 accuracy question. The same lever is now
+  **measured on the sibling engine**: it took upstream's XPU image from 1.29× to
+  2.59× with decode unchanged
+  ([`UPSTREAM_VLLM_NOTES.md`](UPSTREAM_VLLM_NOTES.md) §10.3), so this is no
+  longer a speculative idea — it is a proven lever this engine has not been
+  given. It leaves little slack at the top end, so try an intermediate value
+  first, and re-read the advised byte value from *this* build's boot log (§3).
 - Bench the **stock** engine to close the base-vs-scaler comparison — the
-  original point of keeping both folders, and now the only missing piece.
-- ~~Capture KV-pool size / max concurrency for `0.26.0-b1`~~ **done 2026-09-03**:
-  183,314 tok / 1.40×, down from b3's 234,645 / 1.79× (§3).
-- ~~Test `VLLM_XPU_ENABLE_XPU_GRAPH=1` under `--enforce-eager`~~ **done
-  2026-09-03: no-op, reverted** (§4). MTP is now the only untried decode-*speed*
-  lever.
-- Consider `--kv-cache-memory` instead of util for pool sizing (§3): the engine
-  reports 8.05 GiB available against 4.33 GiB in use, i.e. ~1.86× concurrency for
-  free, no fp8 accuracy question. **This is now the best-value untested change on
-  this engine** — it recovers the pool the `0.26.0-b1` upgrade cost and more.
-  Leaves little slack at the top end, so try an intermediate value first.
-- Re-verify the `VLLM_QUANTIZE_Q40_LIB` path on this image (§7) if `sym_int4` is
-  ever used.
+  original point of keeping both folders.
 - `healthcheck.start_period` is still `7200s`, which was raised for the gemma-4
   experiment's ~52 GB download-and-quantise first boot. gpt-oss-20b only needs
   the ~1800s that covered its silent XPU cold start.
+
+**Closed:**
+
+- ~~Capture KV-pool size / max concurrency for `0.26.0-b1`~~ **done 2026-09-03**:
+  183,314 tok / 1.40×, down from b3's 234,645 / 1.79× (§3). Unchanged on b2.
+- ~~Test `VLLM_XPU_ENABLE_XPU_GRAPH=1` under `--enforce-eager`~~ **done
+  2026-09-03: no-op, reverted** (§4).
+- ~~Re-verify the `VLLM_QUANTIZE_Q40_LIB` path~~ **done 2026-09-10**: correct on
+  both 0.26.0 images (§7). The same sweep found
+  `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` dead and removed it from the compose file.
+- ~~MTP as the remaining decode-*speed* lever~~ **not available on this engine
+  — the earlier note was wrong.** Upstream's
+  [§3.6](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#36-mtp-enable)
+  offers exactly two methods, `qwen3_5_mtp` (models with native MTP layers) and
+  `gemma4_mtp` (needs a matching assistant checkpoint), verified only on
+  `Qwen3.6-27B`, `Qwen3.6-35B-A3B`, `gemma-4-26B-A4B-it` and `gemma-4-31B-it`.
+  gpt-oss-20b has neither native MTP nor a published assistant checkpoint, and
+  none of those four models fits one B60 (§8.1 for gemma-4). **So b2's two MTP
+  fixes are inert here, and there is no untried decode-speed lever left on this
+  engine for this model** — the remaining levers all buy concurrency.

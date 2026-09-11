@@ -36,7 +36,7 @@ zero XPU tags and wrongly suggests no image exists.
 
 | Tag | Pushed | Compressed |
 |---|---|---|
-| `v0.29.0` (our pin) | 2026-09-09 | 4.17 GB |
+| `v0.29.0` (current pin) | 2026-09-09 | 4.17 GB |
 | `latest` | 2026-09-09 | → v0.29.0 |
 | `nightly` | daily | 4.16 GB |
 | `v0.28.0` | 2026-08-26 | 4.14 GB |
@@ -45,15 +45,15 @@ zero XPU tags and wrongly suggests no image exists.
 
 Two contrasts with the Intel images: `latest` here **does** track newest stable
 (see [`SCALER_NOTES.md`](SCALER_NOTES.md) §2 for why it does not there), and
-4.17 GB is roughly **half** the 7.78 GB of `intel/llm-scaler-vllm:0.26.0-b1`.
-Image size fell every release up to 0.28.0 and has been flat since.
+4.17 GB is roughly **half** the 7.78 GB of the `intel/llm-scaler-vllm` 0.26.0
+images. Image size fell every release up to 0.28.0 and has been flat since.
 
-Version position — upstream is ahead of both engines we run:
+Version position — upstream is ahead of both engines in this repo:
 
 | Engine | vLLM base | Image last moved |
 |---|---|---|
 | `intel/vllm:0.21.0-ubuntu24.04` | 0.21.0 | 2026-08-06 |
-| `intel/llm-scaler-vllm:0.26.0-b1` | 0.26.0 | 2026-09-02 |
+| `intel/llm-scaler-vllm:0.26.0-b2` | 0.26.0 | 2026-09-08 |
 | `vllm/vllm-openai-xpu:v0.29.0` | **0.29.0** | 2026-09-09 |
 
 The XPU image lands the same day as the GitHub release (2026-09-09, ~3 h before
@@ -140,7 +140,7 @@ Project and volume shape is deliberately **identical** to the other engines — 
 compete for the B60 and :8000, which is the failure mode already documented for
 the `~/llama_cpp` stack.
 
-## 5. Device mapping — upstream confirms our finding
+## 5. Device mapping — upstream confirms the finding here
 
 The documented XPU run recipe passes the **whole `/dev/dri` device plus a
 `/dev/dri/by-path` bind mount**, unconditionally, at any world size. That is
@@ -149,19 +149,20 @@ exactly the pairing reverse-engineered locally from the
 ([`SCALER_NOTES.md`](SCALER_NOTES.md) §5) — so it is upstream's contract, not a
 local workaround.
 
-Upstream's example also uses `--privileged` and `--network=host`. We use
+Upstream's example also uses `--privileged` and `--network=host`. This repo uses
 `group_add` (render 992 / video 44) and an explicit port map instead, which is
 less privileged and already proven on this host against the Intel images.
 **Untested against this image** — if boot fails on device access, `--privileged`
 is the first thing to try.
 
-Three things the platform sets for us, no config needed: `UCX_MEMTYPE_CACHE=n`,
-`VLLM_WORKER_MULTIPROC_METHOD=spawn` (if unset), and `shutdown_timeout=5`. That
-last one is worth knowing — the in-code reason is that XPU needs a graceful
-shutdown to release oneCCL/Level Zero resources, *"without this, subsequent
-server startups on the same devices may hang during CCL initialization."*
+Three things the platform sets automatically, no config needed:
+`UCX_MEMTYPE_CACHE=n`, `VLLM_WORKER_MULTIPROC_METHOD=spawn` (if unset), and
+`shutdown_timeout=5`. That last one is worth knowing — the in-code reason is
+that XPU needs a graceful shutdown to release oneCCL/Level Zero resources,
+*"without this, subsequent server startups on the same devices may hang during
+CCL initialization."*
 
-## 6. What upstream does NOT give us
+## 6. What upstream does NOT provide
 
 Intel's fork keeps some B60-specific surface that upstream lacks:
 
@@ -292,7 +293,7 @@ the boot margin is only 0.02 GiB over the 3.1 GiB requirement. The cause is not
 compile buffers — eager recovered just 0.23 GiB (2.89 → 3.12). It is upstream's
 larger **1.50 GiB non-torch** footprint.
 
-### ⭐ `--kv-cache-memory` — the engine hands us the exact value
+### ⭐ `--kv-cache-memory` — the engine prints the exact value
 
 The same log line says:
 
@@ -331,6 +332,13 @@ transferred from the scaler unchanged, as the registry lookup predicted.
 | 3 — `max_tokens=200` | **82.8** | 76 ms |
 
 Against `intel/llm-scaler-vllm:0.26.0-b1` (85.6 @400 / 86.0 @200, TTFT ~73 ms):
+
+> **Note on the scaler baseline.** Every `0.26.0-b1` column in this file is still
+> valid for the current scaler pin. That pin moved to `0.26.0-b2` on 2026-09-10
+> and was re-measured on the same box with the same scripts: 85.6 @400, 86.1
+> @200, ~72 ms, KV pool 183,314 tok / 1.40× — identical within noise
+> ([`SCALER_NOTES.md`](SCALER_NOTES.md) §3). b1 is kept as the column label
+> because that is when the numbers were taken.
 
 | | scaler `0.26.0-b1` | upstream `v0.28.0` | Δ |
 |---|---|---|---|
@@ -376,7 +384,7 @@ engine's printed byte value was accurate.
 ⚠️ **Two honest limits on this result:**
 
 1. **2.14× is allocated capacity, not measured concurrency.** `bench.sh` is
-   single-stream. We proved the pool allocates and single-stream is correct —
+   single-stream. The pool provably allocates and single-stream is correct —
    *not* that two concurrent 128k requests actually run. This config sits on
    ~0.14 GiB of card headroom, which is the territory where OOM-on-the-edge and
    504s appeared before. Only `--enforce-eager` (no growing compile buffers)
@@ -458,7 +466,8 @@ prompt_logprobs=1` to "exercise all sampler logic" — and logprobs reach
 `sampler.py:335 torch.topk(...)`, whose XPU kernel segfaults during SYCL program
 build while reading the **persistent** device-code cache.
 
-**Fix: `SYCL_CACHE_PERSISTENT=0`** (that variable is *ours*, not a vLLM default).
+**Fix: `SYCL_CACHE_PERSISTENT=0`** (that variable is set by this repo, not a
+vLLM default).
 Verified as a single-variable change against the failing run: V2 then boots
 clean and `smoke.sh` is ALL PASS. Cost is a device-kernel rebuild each boot;
 total boot still ~70 s.
@@ -466,7 +475,8 @@ total boot still ~70 s.
 Notes on the failure mode, for whoever meets it next:
 
 - The crashing feature is **logprobs, which this deployment never requests** —
-  V2 died proving a path we don't use. Normal serving never reaches it.
+  V2 died proving a path this deployment never uses. Normal serving never
+  reaches it.
 - Not memory: `OOMKilled=false`, the profile printed, the pool allocated.
 - No config knob avoids the warmup. `for_sampler_warmup()` hardcodes its params,
   `--max-logprobs` does not reach it (warmup builds `SamplingParams` directly,

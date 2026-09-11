@@ -10,9 +10,9 @@ name: llm   # SAME project as vllm_xpu ON PURPOSE — shares the hf-cache volume
 
 services:
   vllm-scaler:
-    # Exact pin — upstream says do NOT use :latest, and here `latest` and the
-    # release notes both lag the newest tag. See ../SCALER_NOTES.md §2.
-    image: intel/llm-scaler-vllm:0.26.0-b1
+    # Exact pin — upstream says do NOT use :latest, and here `latest` still
+    # resolves to a much older image. See ../SCALER_NOTES.md §2.
+    image: intel/llm-scaler-vllm:0.26.0-b2
     container_name: vllm-scaler
     restart: unless-stopped
     # Whole /dev/dri + the by-path bind below are BOTH required (oneCCL). ../SCALER_NOTES.md §5
@@ -26,8 +26,9 @@ services:
     volumes:
       - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration
       - hf-cache:/root/.cache/huggingface      # shared with vllm_xpu — weights not re-downloaded
-      # Compile cache — kernels are image-specific, so clear this once after any
-      # image bump: docker compose down && docker volume rm llm_vllm-scaler-cache
+      # Compile cache. Under --enforce-eager nothing is compiled, so this only
+      # ever holds hash-guarded model metadata — no need to clear on an image
+      # bump. Measured: ../SCALER_NOTES.md §6
       - vllm-scaler-cache:/root/.cache/vllm
     environment:
       HF_HOME: /root/.cache/huggingface
@@ -36,9 +37,8 @@ services:
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"
       no_proxy: "localhost,127.0.0.1"
       # Online-quantisation knobs — inert for MXFP4 gpt-oss-20b. ../SCALER_NOTES.md §7
-      # (the Q40 lib path is image-specific; re-check it on an image bump)
+      # (the Q40 lib path is image-specific; verified present on this pin)
       VLLM_QUANTIZE_Q40_LIB: "/opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so"
-      VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT: "1"
       VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
       HF_TOKEN: "${HF_TOKEN:-}"        # empty = anonymous; no secret in this file
     ports:

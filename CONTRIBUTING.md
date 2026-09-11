@@ -11,8 +11,8 @@
 
   ## Getting started
 
-  - For anything non-trivial (bugs, new features), **open an issue first** so we can
-    align before you invest time.
+  - For anything non-trivial (bugs, new features), **open an issue first** so the
+    approach is agreed before you invest time.
   - For small fixes (typos, doc tweaks), a direct pull request is fine.
 
   ## Branching & pull requests
