@@ -17,28 +17,41 @@ been tried and rejected on the scaler engine are in
 [SCALER_NOTES.md](SCALER_NOTES.md); a configuration overview is
 in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
-The stack runs one vLLM engine (port 8000, LAN-exposed) serving `gpt-oss-20b`,
-from one of two **interchangeable** engine images — stock `intel/vllm` or
-Intel's `llm-scaler` fork. An optional chat UI (Open WebUI) ships as a
-**separate** Compose project you can bring up alongside it — see *Running Open
-WebUI (optional)* below.
+The stack runs **one** vLLM engine at a time on port 8000 (LAN-exposed), chosen
+from **three** interchangeable images — stock `intel/vllm`, Intel's `llm-scaler`
+fork, or upstream's own `vllm-openai-xpu`. An optional chat UI (Open WebUI) ships
+as a **separate** Compose project you can bring up alongside it — see *Running
+Open WebUI (optional)* below.
+
+**Currently served: `gemma-4-26b-a4b`** on the upstream engine. The other two
+engines are configured for `gpt-oss-20b`; gemma-4 runs only on upstream, which
+is the sole engine here whose kernels load it. Model names are kept truthful —
+one served id per model — so a swap is visible to downstream clients rather than
+silently changing the model behind a fixed label.
 
 ---
 
 ## Running the stack
 
-The engine ships as two interchangeable images, each in its own **folder** —
-pick one; they serve the same `gpt-oss-20b` on the same port `:8000`:
+The engine ships as three interchangeable images, each in its own **folder** —
+pick one; all publish port `:8000`:
 
-- **`vllm_xpu/`** — stock `intel/vllm` (the default, recommended). Settings can
-  be overridden without editing the compose file via `vllm_xpu/.env` — see
+- **`vllm_xpu/`** — stock `intel/vllm` 0.21.0, serving `gpt-oss-20b`. Settings
+  can be overridden without editing the compose file via `vllm_xpu/.env` — see
   `vllm_xpu/.env.example`.
-- **`scaler/`** — Intel's B-series-optimised `llm-scaler` fork
+- **`scaler/`** — Intel's B-series-optimised `llm-scaler` fork, serving
+  `gpt-oss-20b`. Currently the **fastest** for that model
   (see *Choosing the inference engine* below).
+- **`vllm_openai_xpu/`** — upstream's own XPU image, **currently live**, serving
+  `gemma-4-26b-a4b`. The only engine here that can load gemma-4. Has its own
+  operator guide: [`vllm_openai_xpu/README.md`](vllm_openai_xpu/README.md).
 
-**One GPU → run exactly one engine at a time** (each needs ~17 GiB; together they
-OOM). Each engine lives in its own folder, so every command targets a folder —
-which also means you can't start both by accident.
+**One GPU → run exactly one engine at a time** (each needs 13–17 GiB of weights
+plus its KV pool; together they OOM). Each engine lives in its own folder, so
+every command targets a folder — which also means you can't start two by
+accident. All three share the Compose project name `llm` on purpose, so they
+reuse one weights cache; never pass `--remove-orphans`, which would delete the
+others.
 
 From the repo root:
 
@@ -166,10 +179,10 @@ VLLM_TOOL_CALL_PARSER=hermes
 …then `docker compose -f vllm_xpu/compose.yaml up -d --force-recreate vllm`. What changed and why:
 
 - **Repo + served name** → `Qwen/Qwen3-32B-AWQ`, called `qwen3-32b` by clients (update any gateway's model mapping to match).
-- **`VLLM_MAX_MODEL_LEN` 65536 → 7168** — the empirical B60 cap for this model; 10k and 12k both fail vLLM's KV pre-check at startup.
+- **`VLLM_MAX_MODEL_LEN` 131072 → 7168** — the empirical B60 cap for this model; 10k and 12k both fail vLLM's KV pre-check at startup. Qwen3-32B is **dense**, so unlike gpt-oss it gets no sliding-window discount on KV.
 - **`VLLM_REASONING_PARSER` → `qwen3`** — Qwen3 is hybrid-thinking (`/no_think` in the prompt turns it off); the `openai_gptoss` parser would leave the reasoning field empty.
 - **`VLLM_TOOL_CALL_PARSER` → `hermes`** — Qwen3 emits Hermes-style tool calls, not gpt-oss's `openai` format. (The image also ships `qwen3_xml` and `qwen3_coder`; the latter is only for Qwen3-**Coder**.)
-- **`VLLM_GPU_MEMORY_UTILIZATION` 0.75 → 0.9** — Qwen3-32B-AWQ's weights are ~18 GiB, which won't fit the ~17 GiB that 0.75 reserves. It's a tight fit on 22.7 GiB (the reason `VLLM_MAX_MODEL_LEN` is only 7168) — watch real VRAM and size it empirically per [DEVELOPER.md](DEVELOPER.md).
+- **`VLLM_GPU_MEMORY_UTILIZATION` 0.80 → 0.9** — Qwen3-32B-AWQ's weights are ~18 GiB, so the default 0.80 leaves too little for a usable pool. It's a tight fit on 22.7 GiB (the reason `VLLM_MAX_MODEL_LEN` is only 7168) and **0.86 is the measured OOM edge**, so 0.9 is over it — watch real VRAM and size it empirically per [DEVELOPER.md](DEVELOPER.md). You must also unset the gpt-oss `--kv-cache-memory-bytes` pin, which is absolute and OOMs rather than shrinking.
 - **AWQ, not FP8** — the official `Qwen/*-FP8` weights hit an XPU bug on this image; AWQ is the working path.
 
 Swapping back to gpt-oss-20b = comment those lines out again (the compose
@@ -196,7 +209,7 @@ MODEL=gpt-oss-20b VLLM_ENDPOINT=http://192.168.x.x:8000 ./bench.sh 600  # remote
   appears.
 - **Second positional arg** = custom prompt.
 - **`VLLM_ENDPOINT=`** overrides the endpoint (default `http://localhost:8000`).
-  Both engines publish `:8000`, so the same command benchmarks whichever is up.
+  All three engines publish `:8000`, so the same command benchmarks whichever is up.
 
 Two TTFT numbers are printed: `TTFT (any)` = first token of any kind ("is it
 alive"), `TTFT (content)` = first user-visible token after reasoning finishes
@@ -324,7 +337,7 @@ Host path: `/var/lib/docker/volumes/llm_<name>/_data`
 
 | Volume | Contents | Notes |
 |--------|----------|-------|
-| `hf-cache` | HF model weights | Survives compose changes; **shared by both engines** (no re-download when you swap) |
+| `hf-cache` | HF model weights | Survives compose changes; **shared by all three engines** (no re-download when you swap) |
 | `vllm-cache` | torch.compile + AOT artifacts (base engine) | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
 | `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`scaler/compose.yaml`) first boots. Stays near-empty — that engine runs `--enforce-eager`, so nothing is compiled, and it needs no clearing on an image bump |
 
@@ -374,14 +387,21 @@ restarts. It renders `message.reasoning` as a collapsible panel out of the box.
 
 ---
 
-## Choosing the inference engine (base vs llm-scaler)
+## Choosing the inference engine
 
-The stack ships two interchangeable vLLM engines — the stock `intel/vllm`
-(`vllm_xpu/`, the default) and Intel's B-series-optimised
-`llm-scaler` fork (`scaler/`). Both serve `gpt-oss-20b` on
-`:8000`, so whichever is up, downstream clients need no change. **One GPU — they
-cannot run at the same time** (the VRAM math is in [DEVELOPER.md](DEVELOPER.md)).
-Swap one for the other (from the repo root):
+The stack ships three interchangeable vLLM engines, all on `:8000`:
+
+| folder | image | serves | pick it for |
+|---|---|---|---|
+| `vllm_xpu/` | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
+| `scaler/` | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s) |
+| `vllm_openai_xpu/` | `vllm/vllm-openai-xpu` v0.29.0 | `gemma-4-26b-a4b` | **the only one that loads gemma-4**; newest vLLM |
+
+**One GPU — they cannot run at the same time** (the VRAM math is in
+[DEVELOPER.md](DEVELOPER.md)). The two gpt-oss engines are drop-in for each
+other, so downstream clients need no change when you swap them; **switching to
+or from the upstream engine changes the served model name**, so the gateway's
+model mapping has to move with it. Swap (from the repo root):
 
 ```bash
 docker compose -f vllm_xpu/compose.yaml down          # stop the base engine
@@ -400,9 +420,9 @@ image unlocks quantised-MoE paths that the stock image doesn't (e.g.
 hardware it is currently also the **faster** of the two for gpt-oss-20b:
 `0.26.0-b2` measures **85.6 tok/s** single-stream on `./bench.sh 400` with ~72 ms
 TTFT, the best figure recorded here. Still benchmark before adopting — the win
-has to be measured on your own box, and note the two engines sit on **different
-vLLM bases** (scaler `0.26.0-b2` → vLLM 0.26.0, stock → 0.21.0), so a difference
-mixes the fork's optimisations with an engine-version gap. Compare at equal
+has to be measured on your own box, and note the engines sit on **different vLLM
+bases** (scaler `0.26.0-b2` → vLLM 0.26.0, stock → 0.21.0, upstream → 0.29.0), so
+any difference mixes the fork's optimisations with an engine-version gap. Compare at equal
 `max_tokens` and discard the first run after a cold start *or after a long idle*,
 or the numbers lie; [SCALER_NOTES.md](SCALER_NOTES.md) has the full
 image-by-image table and the hygiene rules.

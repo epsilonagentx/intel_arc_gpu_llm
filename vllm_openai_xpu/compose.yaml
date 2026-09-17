@@ -56,20 +56,22 @@ services:
       - "8000:8000"          # same port as the other engines (only one runs at a time)
     # ENTRYPOINT is ["vllm","serve"], so command is ARGS ONLY — no shell wrapper
     # and no `vllm serve` prefix (this differs from scaler/compose.yaml).
-    # !! --enforce-eager is REQUIRED AT 128k, and NOT for the scaler's reason.
-    # Upstream defaults cudagraph_mode to NONE but STILL runs torch.compile/
-    # Inductor (CompilationMode.VLLM_COMPILE). Those buffers are not capped by
-    # gpu-memory-utilization, so at 128k they starved the KV pool to 2.89 GiB and
-    # boot died needing 3.1 GiB. Eager restores it to ~4.3 GiB.
-    # It is NOT required at 32k: MEASURED 2026-09-16 on gemma-4, compiled mode
-    # boots with the full 4.25 GiB pin (78,433 tok / 2.39x intact) and is
-    # +7.1% decode (52.0 -> 55.7 tok/s). Set VLLM_EAGER_FLAG=--no-enforce-eager
-    # to take it; the flag is passed whole because argparse builds this as a
-    # BooleanOptionalAction, so `--enforce-eager=False` does NOT parse.
-    # Prefill is UNCHANGED by it (still quadratic — that is the attention
-    # backend, not launch overhead). VLLM_XPU_ENABLE_XPU_GRAPH=1 only works in
-    # compiled mode (it is a no-op under eager) and adds a further +0.5% for
-    # 1.54 GiB of capture memory — not worth the pool. ../UPSTREAM_VLLM_NOTES.md §3
+    # !! --enforce-eager is REQUIRED BY THE 8.6 GiB PIN BELOW, not by 128k, and
+    # NOT for the scaler's reason. Upstream defaults cudagraph_mode to NONE but
+    # STILL runs torch.compile/Inductor (CompilationMode.VLLM_COMPILE). Those
+    # buffers are not capped by gpu-memory-utilization, and with gpt-oss's pin
+    # they starved the KV pool to 2.89 GiB and boot died needing 3.1 GiB.
+    # gemma-4's smaller 4.25 GiB pin leaves headroom, so compiled mode boots
+    # with the pool intact -- MEASURED at 32k, 64k AND 131,072 (2026-09-17).
+    # The buffers scale with max-num-batched-tokens (2496), NOT with context.
+    # Set VLLM_EAGER_FLAG=--no-enforce-eager to take it; the flag is passed
+    # whole because argparse builds this as a BooleanOptionalAction, so
+    # `--enforce-eager=False` does NOT parse.
+    # Prefill is UNCHANGED by it (still quadratic, exponent 2.048 measured -- that
+    # is the attention backend, not launch overhead).
+    # VLLM_XPU_ENABLE_XPU_GRAPH=1 only works in compiled mode (it is a no-op
+    # under eager) and adds a further +0.5% for 1.54 GiB of capture memory --
+    # not worth the pool. ../UPSTREAM_VLLM_NOTES.md §3
     command:
       - "${VLLM_MODEL:-openai/gpt-oss-20b}"
       - "--host=0.0.0.0"

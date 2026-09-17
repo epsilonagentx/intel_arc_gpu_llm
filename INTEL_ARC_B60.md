@@ -6,18 +6,23 @@ why live in the two role docs:
 - **[README.md](README.md)** — devops / operator: how to run, swap, monitor, troubleshoot.
 - **[DEVELOPER.md](DEVELOPER.md)** — developer: why the config is what it is.
 
-> The Compose project name is pinned to `llm` (`name: llm` in both engine
-> compose files), so the cache volumes stay `llm_*` regardless of the
-> folder the repo is checked out into — and so both engines share one weights cache.
+> The Compose project name is pinned to `llm` (`name: llm` in **all three**
+> engine compose files), so the cache volumes stay `llm_*` regardless of the
+> folder the repo is checked out into — and so all three engines share one
+> weights cache. Never pass `--remove-orphans`: in one shared project it deletes
+> the other engines.
 
 ---
 
 ## Current config
 
 Source of truth is the engine compose files — `vllm_xpu/compose.yaml` (stock
-`intel/vllm`, the default; values overridable via `vllm_xpu/.env`, see
-`vllm_xpu/.env.example`) and `scaler/compose.yaml` (the alternative
-`llm-scaler` engine). This table snapshots the default `vllm` engine for quick orientation.
+`intel/vllm`; values overridable via `vllm_xpu/.env`, see `vllm_xpu/.env.example`),
+`scaler/compose.yaml` (Intel's `llm-scaler` fork) and
+`vllm_openai_xpu/compose.yaml` (upstream's own XPU image — **currently live**,
+serving `gemma-4-26b-a4b`; see its own
+[README](vllm_openai_xpu/README.md) and [UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md)).
+This table snapshots the stock `vllm` engine for quick orientation.
 
 | | |
 |---|---|
@@ -27,8 +32,8 @@ Source of truth is the engine compose files — `vllm_xpu/compose.yaml` (stock
 | Devices | whole `/dev/dri` + `/dev/dri/by-path` bind-mount (oneCCL enumeration) |
 | Model | `openai/gpt-oss-20b`, served as **`gpt-oss-20b`** |
 | Endpoint | `http://localhost:8000/v1` (LAN-exposed on port 8000) |
-| Context | `--max-model-len 65536` (64k) |
-| VRAM | `--gpu-memory-utilization 0.75` |
+| Context | `--max-model-len 131072` (128k) |
+| VRAM | `--gpu-memory-utilization 0.80` + an explicit `--kv-cache-memory-bytes` pool |
 | Reasoning | `--reasoning-parser openai_gptoss` → trace in `message.reasoning` |
 | Tools | `--enable-auto-tool-choice --tool-call-parser openai` (OpenAI format, **on**) |
 

@@ -1,12 +1,15 @@
 # Local LLM stack — developer notes (the *why*)
 
-Why the config in the engine compose files (`vllm_xpu/compose.yaml` and
-`scaler/compose.yaml`) is the way it is. For how to *operate* the
-stack see [README.md](README.md); for a configuration overview see [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
+Why the config in the engine compose files is the way it is. This file covers
+the two **gpt-oss-20b** engines, `vllm_xpu/compose.yaml` and
+`scaler/compose.yaml`; the third engine has its own rationale doc,
+[UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md). For how to *operate* the stack
+see [README.md](README.md); for a configuration overview see
+[INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
 All values here are empirical on the **Intel Arc Pro B60 (22.71 GiB usable)**. The
 stack upgraded from `intel/vllm:0.17.0-xpu` to **`intel/vllm:0.21.0-ubuntu24.04`**;
-the gpt-oss-20b boot and the `0.75` util ceiling were re-validated on 0.21.0, but
+the gpt-oss-20b boot and the util ceiling were re-validated on 0.21.0, but
 the other 0.17.0-era measurements below (Qwen3 context caps, the 0.86-OOM edge, the
 reasoning-effort latencies) have **not** been re-run on 0.21.0. Nothing here is
 portable to other cards or images without re-checking. The host is **Linux only** —
@@ -14,31 +17,39 @@ the Intel `xe` GPU driver is Linux-specific, so Windows and macOS are out of sco
 
 ---
 
-## Why `--gpu-memory-utilization 0.75` (not 0.95)
+## Why `--gpu-memory-utilization 0.80` (not 0.95)
 
 On this XPU build, `--gpu-memory-utilization` sizes the **weights + KV pool** but
 does **NOT** cap torch.compile/Inductor kernel + workspace buffers, which keep
 growing as new request shapes get compiled.
 
 At **0.86** the card filled to 22.67 / 22.71 GiB (~0.04 GiB free) → OOM-on-the-edge,
-instability, and 504s. **0.75** (~17 GiB: ~13.7 GiB weights + ~3.3 GiB KV pool)
-leaves ~2.5 GiB of real headroom for that uncapped compile growth.
-
-Re-validated on `0.21.0-ubuntu24.04` (compiled, production flags): clean boot, KV
-pool ~3.96 GiB, no OOM at 0.75 — the ceiling carries over unchanged. The 0.86-OOM
-edge above was characterised on `0.17.0-xpu` and not re-tested on 0.21.0.
+instability, and 504s. That remains the hard ceiling. The shipped value is
+**0.80**, which became safe once the displays were moved off the B60 onto the
+iGPU — before that, 0.75 was the limit, because a desktop session was also
+holding VRAM and a freeze was possible.
 
 **The trap:** util looks like a headroom dial but it doesn't account for the
 compile buffers. To grow capacity, raise `--max-model-len` and re-check real
 VRAM — **never** just bump util, or you'll OOM on the edge again.
 
-## Why 64k context fits
+**Both gpt-oss engines now size the KV pool explicitly** with
+`--kv-cache-memory-bytes` instead of letting util decide it. That value is
+absolute and **OOMs rather than shrinking**, so it is model- and runner-specific;
+see [SCALER_NOTES.md](SCALER_NOTES.md) and
+[UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md) §5.
 
-gpt-oss-20b is an MoE with ~13.7 GiB MXFP4 weights (~3.6B active params). It's
-natively 128k (YaRN, `max_position_embeddings=131072`), but `--max-model-len
-65536` keeps the reserved KV pool + activation buffers small. gpt-oss's
-alternating sliding-window(128) + full-attention layers halve per-request KV
-cost, so the ~3.3 GiB pool holds 64k with concurrency to spare.
+## Why 128k context fits
+
+gpt-oss-20b is an MoE with ~13.7 GiB MXFP4 weights (~3.6B active params), natively
+128k (YaRN, `max_position_embeddings=131072`), and the engines now ship the full
+**131072**. What makes it affordable is the attention geometry: gpt-oss alternates
+sliding-window(128) and full-attention layers, so per-request KV is roughly halved
+against a dense model — ~24.8 KiB/token. With the explicit ~8 GiB pool that gives
+~340k tokens of KV, i.e. **2.6× concurrency at 128k**.
+
+The 64k/0.75 profile documented here previously was the pre-2026-07 baseline,
+from when the B60 still drove displays.
 
 ## Sizing `--max-model-len`
 
@@ -55,7 +66,7 @@ Known-good empirical values on the B60:
 
 | Model | Weights (loaded) | Working `--max-model-len` | Notes |
 |-------|------------------|----------------------------|-------|
-| gpt-oss-20b | ~13.7 GiB | **65536** (64k) | At 0.75 util; the value shipped in `vllm_xpu/compose.yaml` |
+| gpt-oss-20b | ~13.7 GiB | **131072** (128k) | At 0.80 util + an explicit KV pin; the value shipped in `vllm_xpu/compose.yaml` |
 | Qwen3-32B-AWQ | 18.14 GiB | **7168** | 12k and 10k both failed the pre-check |
 
 *Weights here are the loaded figure vLLM reports at startup (GiB); the ≈GB
@@ -101,10 +112,15 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
   `by-path` on warm-up) or it won't boot. Details in `vllm_xpu/compose.yaml` and the
   README's *Upgrading the vLLM image*.
 - **Gemma 4 arches are now registered** (`gemma4` / `gemma4_mm`) — unlike
-  `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate,
-  but running Gemma 4 on the B60 is still unproven here (XPU quant-kernel gaps), so
-  this stack stays on gpt-oss-20b. The `qwen3` and `openai_gptoss` reasoning parsers
-  are present as before.
+  `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate.
+  The `qwen3` and `openai_gptoss` reasoning parsers are present as before.
+  > **No longer unproven.** Gemma-4-26B-A4B runs on the B60 on the *upstream*
+  > engine (`vllm_openai_xpu/`, v0.29.0) from an offline int4 **group-32**
+  > checkpoint, at 131,072 context. The XPU expert kernel accepts only group-32
+  > or channelwise int4 — that narrowness, not a kernel gap, was the real
+  > constraint. See [UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md) §11 and
+  > [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md). This *scaler /
+  > `vllm_xpu` stack* still stays on gpt-oss-20b.
 - Reasoning trace field is still `message.reasoning`, not `reasoning_content`
   (re-verified on 0.21.0) — see [README.md](README.md) for the consumer-parsing
   implication.
@@ -113,18 +129,21 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 
 ---
 
-## Choosing the inference engine: base vs llm-scaler
+## Choosing the inference engine
 
-Two interchangeable engine images serve the same gpt-oss-20b on the same
-`:8000`, so either can be production — one at a time (single GPU). Each has its
-own folder: `vllm_xpu/compose.yaml` (stock `intel/vllm`, the default)
-and `scaler/compose.yaml` (Intel's B-series-optimised `llm-scaler-vllm`
-fork). The operator swap/run procedure is in the README.
+Three engine images, one at a time (single GPU). Two serve gpt-oss-20b and are
+drop-in for each other — `vllm_xpu/compose.yaml` (stock `intel/vllm`) and
+`scaler/compose.yaml` (Intel's B-series-optimised `llm-scaler-vllm` fork). The
+third, `vllm_openai_xpu/`, runs upstream's own image and serves **gemma-4**;
+swapping to it changes the served model name, so downstream mappings move with
+it. The operator procedure is in the README.
 
 **Why compare:** measure whether the `llm-scaler` fork decodes gpt-oss-20b
-faster than the stock image. The single-stream decode baseline of **~60 tok/s**
-on the B60 (via `bench.sh`) was measured on `0.17.0-xpu`; re-baseline on the
-current `0.21.0-ubuntu24.04` stock image before comparing — that's the yardstick.
+faster than the stock image. Current standing on this box, same scripts:
+**85.6 tok/s** scaler `0.26.0-b2` vs **83.1** upstream `0.29.0` — the scaler
+leads by ~3%. The old **~60 tok/s** figure in earlier revisions of this file was
+measured on `0.17.0-xpu` and is two engine generations out of date; don't use it
+as a yardstick.
 **The engines no longer share a vLLM base.** They briefly did — both on 0.21.0,
 which the fork reached in `0.21.0-b1` — but the scaler pin moved to the 0.26.0
 line on 2026-09-02 (`0.26.0-b1`, then `-b2` on 2026-09-10), taking the fork to a
@@ -132,11 +151,11 @@ vLLM 0.26.0 base. A measured difference is again a mix of the fork's
 Arc-specific work *and* a five-minor-version engine gap, so attribute any win
 carefully.
 
-**Why two folders, not a compose profile:** one GPU (~22.7 GiB) and gpt-oss-20b
-needs ~17 GiB, so the two engines can't coexist (~31 GiB = OOM). A separate
-folder per engine means every `up` must target an engine's folder (cd into it,
-or `-f` its `compose.yaml`), so you can't start both by accident and "which
-engine is prod" is always explicit.
+**Why a folder per engine, not a compose profile:** one GPU (~22.7 GiB), and a
+model's weights plus its KV pool take 17–21 GiB, so **no two of the three
+engines can coexist**. A separate folder per engine means every `up` must target
+an engine's folder (cd into it, or `-f` its `compose.yaml`), so you can't start
+two by accident and "which engine is prod" is always explicit.
 
 **Image:** pinned to `intel/llm-scaler-vllm:0.26.0-b2` (its docs warn against
 `:latest`) — **boot-tested and validated** on the B60 with gpt-oss-20b at

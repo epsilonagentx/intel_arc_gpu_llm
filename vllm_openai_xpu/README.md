@@ -61,7 +61,7 @@ boot or silently degrades it.
 | `VLLM_TOOL_CALL_PARSER` | Model-family specific, same quiet failure mode |
 | `VLLM_MAX_MODEL_LEN` **!** | Context window; must fit VRAM after weights |
 | `VLLM_KV_CACHE_MEMORY` **!** | KV pool in **absolute bytes**; overrides util, skips profiling, and OOMs rather than shrinking |
-| `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required at 128k) or `--no-enforce-eager` (+7.1% at 32k). Passed whole — `--enforce-eager=False` does not parse. See *Performance* |
+| `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required by gpt-oss's 8.6 GiB pin) or `--no-enforce-eager` (gemma-4, measured fine at 128k). Passed whole — `--enforce-eager=False` does not parse. See *Performance* |
 | `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults, e.g. always-on reasoning |
 
 Shell variables beat `.env`, but **only for the names you pass** — so the
@@ -80,17 +80,64 @@ just `VLLM_MODEL`.
 | | gpt-oss-20b | gemma-4-26B-A4B-it (int4) |
 |---|---|---|
 | weights on device | 12.87 GiB | 16.93 GiB |
-| decode | **83.2 tok/s** (chunks) | **55.7 tok/s** compiled / 52.0 eager (true tokens) |
-| TTFT, short prompt | ~76 ms | ~56 ms |
+| decode | 83.2 tok/s (**chunks** — understated, see note) | **56.1 tok/s** (true tokens) |
+| TTFT, short prompt | ~76 ms | 93 ms reasoning on / **42 ms** off |
 | KV pool | 338,928 tok | 78,433 tok |
-| concurrency | 2.59× @128k | 2.39× @32k |
-| max context | 131,072 | 32,768 (hard ceiling ~48.5k) |
+| concurrency | 2.59× @128k | **2.39× @32k** |
+| max context | 131,072 | **32,768 shipped** — 131,072 verified, ceiling 162,496 |
 | reasoning | always on | opt-in (see below) |
 | large cold prompts | linear, fine | **quadratic — see warning** |
 
-**gpt-oss-20b is the better choice for coding-CLI traffic** through a gateway,
-because its prefill stays linear at large context and it has 4× the context.
-gemma-4 is the newer and stronger model, and is vision-capable.
+**gemma-4's context was never VRAM-limited.** It boots, serves and passes
+`smoke.sh` at 131,072 on the same 4.25 GiB pool, with decode and TTFT unchanged
+(verified 2026-09-17). It ships at **65,536 as a deliberate guardrail**, not
+because of a memory limit — see *gemma-4 context scaling* below for the formula
+that predicts its pool to within 0.003%, and *why 65,536* for the reasoning.
+
+### Why 32,768, and why the cap is not a speed setting
+
+**Lowering the cap does not make the model faster.** Measured same-session, three
+warm `bench.sh 400` runs at each setting:
+
+| cap | decode | TTFT | KV pool reserved |
+|---|---|---|---|
+| 32k | 46.2 tok/s | 106 ms | 4.25 GiB |
+| 64k | 46.3 tok/s | 106 ms | 4.25 GiB |
+| 128k | 46.3 tok/s | 105 ms | 4.25 GiB |
+
+The pool is pinned in absolute bytes, so it is identical at every cap, and a
+given prompt costs the same wherever the cap sits. The concurrency figure is only
+pool ÷ one-max-length-request — a ratio, not a capacity.
+
+What the cap **does** control is the longest prefill a client can trigger:
+
+| | 32k | 64k | 96k | 128k |
+|---|---|---|---|---|
+| largest prompt accepted | 32,768 | 65,536 | 98,304 | 131,072 |
+| **worst-case prefill** | **~4.6 min** | ~22 min | ~51 min | ~92 min |
+| concurrency | **2.39×** | 1.77× | 1.41× | 1.16× |
+
+At 32,768 an oversized prompt fails fast with a `400` instead of occupying the
+B60 for tens of minutes and then very likely timing out upstream anyway — and it
+leaves the most pool for prefix cache. Raise the cap when you have a use for
+prompts that size **and** timeouts along the whole path to match.
+
+**gpt-oss-20b is still the better choice for coding-CLI traffic** through a
+gateway, because its prefill stays linear. gemma-4 is the newer and stronger
+model, and is vision-capable.
+
+> ⚠ **`bench.sh` under-reports gemma-4 by ~15%, and the reason matters.** It
+> counts SSE *chunks*, but with reasoning on the reasoning channel packs **1.15
+> tokens per chunk**, so it reads ~48 chunk/s where the true rate is **56.1
+> tok/s**. RESOLVED 2026-09-17 by streaming with `stream_options.include_usage`,
+> which gives TTFT from the first chunk and true counts from the final usage
+> chunk: 56.1 tok/s with thinking on, 55.8 with it off (so **reasoning costs no
+> throughput**), and with thinking off chunks and tokens go exactly 1:1 —
+> confirming the mechanism rather than merely correlating with it.
+>
+> **gpt-oss's 83.2 is also a chunk count** and is therefore understated too, by
+> an unmeasured amount — it always reasons, so it can't be measured with
+> reasoning off. Treat the cross-model gap as indicative, not exact.
 
 ### gemma-4 checkpoint constraint
 
@@ -100,25 +147,140 @@ smaller and far more popular **group-64** builds are rejected at load despite
 being ~2 GiB lighter. Check `quantization_config.config_groups.*.weights.group_size`
 before trying any other MoE checkpoint.
 
+### gemma-4 context scaling — why 131,072 fits in a 4.25 GiB pool
+
+gemma-4 is **25 sliding-attention layers (window 1024) + 5 full-attention
+layers**, a 5:1 pattern, and its checkpoint declares
+`max_position_embeddings: 262144`. In vLLM 0.29.0
+`SlidingWindowSpec.max_memory_usage_bytes` bounds those 25 layers at
+`min(sliding_window - 1 + max_in_flight_tokens, max_model_len)` — **independent
+of `--max-model-len`**. Only the 5 full-attention layers scale with context, and
+they are the cheap ones: 2 KV heads × 512, against the sliding layers' 8 × 256.
+
+So the KV cost is a large fixed block plus a small linear term:
+
+```
+fixed  (25 sliding layers, window-bounded) = 1.235 GB      # context-independent
+linear (5 full layers)                     = 20 KiB/token
+```
+
+Measured against that formula at the shipped 4.25 GiB pin — **raising
+`--max-model-len` costs no VRAM at all**:
+
+| `--max-model-len` | per request | concurrency | KV pool (predicted / **logged**) |
+|---|---|---|---|
+| 32,768 | 1.906 GB | 2.39× | 78,435 / **78,433** |
+| 65,536 | 2.578 GB | 1.77× | 116,028 / **116,025** |
+| **131,072** | 3.920 GB | **1.16×** | 152,596 / **152,592** |
+| 162,496 | 4.563 GB | 1.00× | hard ceiling |
+
+Weights (16.93 GiB), pool (4.25 GiB), decode and TTFT were byte-for-byte
+identical across all three boots; only concurrency moves. A 64,708-token prompt
+answered a question about its *last* record correctly, so the window is real and
+not merely allocated.
+
+> **⚠ Raising `--max-num-batched-tokens` LOWERS the context ceiling.** It feeds
+> `max_in_flight_tokens`, which inflates the **sliding** reservation, not the
+> full-attention one. At 8192 the fixed block balloons 1.235 → 3.568 GB and the
+> ceiling collapses to 48,576. An earlier revision of this file reported that
+> collapse as a property of the model ("hard ceiling ~48.5k") — it is an
+> artifact of the flag. Leave it at the default.
+
 ### ⚠ gemma-4 prefill is quadratic, and it is not tunable
 
-gemma-4 has heterogeneous head dims (`sliding_attention` 256 /
-`full_attention` 512). XPU has no FA4 kernel, so vLLM force-selects
-`TRITON_ATTN` at config level — `VLLM_ATTENTION_BACKEND` is **ignored**, and
-raising `--max-num-batched-tokens` buys only ~15% while inflating the KV
-requirement enough to break a 64k boot.
+This, not VRAM, is the real limit on usable context — and the cause is a kernel
+capability gate, not a missing XPU backend.
+
+**XPU has its own flash-attention kernel and it is the default.**
+`xpu_ops.flash_attn_varlen_func` is what gpt-oss uses, which is why *its* prefill
+is fast. gemma-4 is locked out of it:
+
+| step | source | result |
+|---|---|---|
+| XPU flash is FA2-class | `fa_utils.py`: `if is_xpu(): return 2` | version 2 |
+| flash caps head_size at 256 without FA4 | `flash_attn.py supports_head_size()` | 512 needs FA4 |
+| gemma-4's full-attention layers | `global_head_dim: 512` | 512 |
+| FA4 on XPU | `import vllm.vllm_flash_attn` → *"requires the CUDA flash attention extensions"* | **unavailable** |
+
+⇒ `supports_head_size(512)` is `False`, FLASH_ATTN is ineligible, and
+`Gemma4Config` selects `TRITON_ATTN` — the only backend that JIT-compiles for
+both 256 and 512. vLLM puts *all* layers on it deliberately: mixing backends
+causes *"mixed backend selection and numerical divergence"*.
+
+> **`VLLM_ATTENTION_BACKEND` is honoured, then refused** — not ignored, as an
+> earlier revision of this file said. The override is
+> `elif attention_config.backend is None`, so an explicit request survives
+> config, and is then rejected on the head-size gate above. Don't spend time
+> forcing it.
+
+The tell that the *kernel* is at fault rather than the algorithm: prefill runs at
+**49.9 tok/s** while decode does **56.1**. Prefill is *slower than decode* —
+which should be impossible on a healthy path, because prefill batches 2,496
+tokens per chunk and is compute-bound, while decode is memory-bound at one token
+per step. The kernel is discarding essentially all of prefill's parallelism. At 127k the 5
+full-attention layers account for **92.5%** of attention work, so a hypothetical
+per-layer split (flash for the twenty-five 256-dim layers, Triton for the five
+512-dim ones) would recover only ~7.5%. **The only real fix is a fast
+head_dim-512 XPU kernel** — upstream work, nothing configurable here.
 
 | cold prompt | wall |
 |---|---|
 | 2,421 tok | 2.2 s |
 | 4,821 tok | 5.6 s |
 | 9,621 tok | 19.4 s |
-| 19,221 tok | **80.8 s** |
+| 19,221 tok | 80.8 s |
+| **64,708 tok** | **1297.6 s (21.6 min)** |
 
-2× tokens ⇒ 4× time. **Prefix caching hides this** for repeated or growing
-prompts: the same 9.6k prompt went 26.9 s cold → **0.38 s** warm (71×). So
-conversation and growing context are fine; a large **cold** context (fresh RAG
-document, big paste) is where it hurts.
+Least-squares fit over the three same-harness points below gives exponent
+**2.048** — essentially plain quadratic — and reproduces all three to within
+**±0.1%**:
+
+```
+T ≈ 26.3 s × (n / 9643)^2.048
+```
+
+| n | measured | fit |
+|---|---|---|
+| 9,643 | 26.3 s | 26.3 s (−0.1%) |
+| 31,957 | 305.3 s | 305.7 s (+0.1%) |
+| 64,708 | 1297.6 s | 1296.5 s (−0.1%) |
+
+⇒ **~22 min at the 65,536 cap**, ~51 min at 96k, ~92 min at 128k. Prefill
+throughput at 64.7k is only 49.9 tok/s — barely faster than *decode* (~46), which
+is the tell that the forced Triton kernel is wasting the parallelism prefill
+should enjoy.
+
+> An earlier revision of this file claimed exponent **2.287** and ~109 min at
+> 128k. That came from mixing one session's 64.7k measurement with a *different*
+> session's 19,221 → 80.8 s datapoint taken under another config. Never fit a
+> curve across sessions.
+
+**Prefix caching is what makes this usable, and it improves with size.** Same
+prompt sent twice on a virgin engine:
+
+| n | cold | warm | speedup |
+|---|---|---|---|
+| 9,643 | 26.3 s | 0.31 s | **84×** |
+| 31,957 | 305.3 s | 0.63 s | **481×** |
+
+Warm time stays roughly flat while cold grows quadratically, so the ratio climbs
+with prompt size. This also **refutes** a plausible worry: sliding-window layers
+free their out-of-window blocks mid-request (`remove_skipped_blocks`), which
+looked like it should defeat reuse on long prompts. It doesn't.
+
+So conversation and growing context are fine; a large **cold** context (fresh RAG
+document, big paste) is where it hurts. **You pay it once per document per engine
+lifetime** — the cache is VRAM-resident, so a `--force-recreate` throws it away.
+
+Two practical consequences:
+
+- **Put stable content first.** A document at the top of the prompt stays a
+  reusable prefix across many different questions; the same document placed
+  *after* a varying question caches nothing, because matching runs from token 0.
+- **Growing a conversation costs the same total as one big prefill** — the work
+  is the same triangle either way. What changes is that it's spread out, so
+  per-turn latency creeps up: a ~2k-token turn costs ~40 s at 32k of context and
+  ~2.2 min at 100k.
 
 ---
 
@@ -157,8 +319,8 @@ Three of those are **not optional**, and each fails differently:
 | variable | if you omit it while `.env` holds gemma's value |
 |---|---|
 | `VLLM_KV_CACHE_MEMORY` | boots, but the 4.25 GiB pin strands ~4 GiB and roughly halves the pool |
-| `VLLM_EAGER_FLAG` | **boot fails** — compiled mode at 128k starves the KV pool, which is the case `--enforce-eager` exists for |
-| `VLLM_MAX_MODEL_LEN` | silently caps gpt-oss at 32,768 instead of 131,072 |
+| `VLLM_EAGER_FLAG` | **boot fails** — compiled mode with gpt-oss's 8.6 GiB pin starves the KV pool, which is the case `--enforce-eager` exists for |
+| `VLLM_MAX_MODEL_LEN` | **silently caps gemma-4 at 65,536 instead of 131,072** — the blocks differ again, so this is load-bearing |
 
 `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null` is tidiness only — an unknown template
 kwarg is verified harmless on gpt-oss, which always reasons regardless.
@@ -262,10 +424,11 @@ Allow 1500+.
 
 **One truthful name per model** — `gpt-oss-20b` and `gemma-4-26b-a4b`. The id is
 set by `VLLM_SERVED_MODEL_NAME` and is not validated against the checkpoint, so
-it *could* be used as a fixed label to hide a swap. Don't: the two models differ
-in context limit (131,072 vs 32,768) and prefill cost, so a consumer that keeps
-sending gpt-oss-sized prompts to gemma-4 gets hard `400`s that look like a
-gateway fault rather than a deliberate model change.
+it *could* be used as a fixed label to hide a swap. Don't: the two models now
+differ in context cap (131,072 vs 65,536) *and* cost far more than that ratio
+suggests, so a consumer that keeps sending gpt-oss-sized prompts to gemma-4 gets
+hard `400`s that look like a gateway fault rather than a deliberate model
+change. Repoint the consumer's context cap as well as its model id.
 
 A swap therefore means updating the consumer's model mapping. That is the point
 — it makes the change visible where the limits actually differ.
@@ -319,9 +482,10 @@ The endpoint is OpenAI-compatible and **unauthenticated** — see *Firewall* in 
 just examples); point it at `http://<host>:8000/v1` using a served model name.
 
 **A model swap changes the served name, so the consumer 404s until its model
-mapping is updated.** That is deliberate — the two models have different context
-limits, and a fixed label would hide that mismatch until it surfaced as a `400`
-on a long prompt. Update both together.
+mapping is updated.** That is deliberate — the two models charge very different
+different context caps (131,072 vs 65,536) and very different prefill costs, and
+a fixed label would hide both until one surfaced as a `400` or a stall. Update
+both together.
 
 ---
 
@@ -340,18 +504,27 @@ Rarely changed; all have safe compose defaults.
 
 ## Performance
 
-### Eager vs compiled — take compiled at 32k
+### Eager vs compiled — take compiled on gemma-4
 
 Upstream runs `torch.compile` even with cudagraphs off, and those buffers are
-**not** capped by `--gpu-memory-utilization`. At **128k** (gpt-oss) they starved
-the KV pool and killed the boot, which is why `--enforce-eager` is the default.
-At **32k** (gemma-4) there is headroom, and compiled mode is measured free:
+**not** capped by `--gpu-memory-utilization`. With **gpt-oss's 8.6 GiB pin** they
+starved the KV pool and killed the boot, which is why `--enforce-eager` is the
+compose default. gemma-4's 4.25 GiB pin leaves headroom, and compiled mode is
+measured free — at 32,768, 65,536 **and** 131,072, all boot-tested on
+2026-09-17 with the full pool intact. The compile buffers scale with
+`max_num_batched_tokens` (2496), *not* with context, so context length does not
+change this trade-off:
 
 | config | decode (true tokens) | KV pool | concurrency |
 |---|---|---|---|
 | eager | 52.0 tok/s | 78,433 | 2.39× |
 | **compiled** | **55.7 tok/s** (+7.1%) | 78,433 | 2.39× |
 | compiled + XPU graph | 56.0 tok/s | 46,138 | 1.41× |
+
+> ✅ **This table's 55.7 is confirmed.** Re-measured 2026-09-17 with
+> `include_usage`: **56.1 tok/s** true. The ~46 figure seen that day was
+> `bench.sh`'s chunk count, not a regression. Context length does not affect
+> decode (46.2 / 46.3 / 46.3 chunk/s at 32k / 64k / 128k — identical).
 
 ```dotenv
 VLLM_EAGER_FLAG=--no-enforce-eager
@@ -398,8 +571,9 @@ of that; the rest is architectural.
 | Reasoning field always empty | gemma-4 without `enable_thinking` — set it per request or via `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` |
 | Trace returned but no answer | Reasoning consumed the whole `max_tokens`; raise it to 1500+ |
 | OOM at boot | KV pin from the other model; `VLLM_KV_CACHE_MEMORY` is absolute and OOMs rather than shrinking |
-| `400` on long prompts | gemma-4 caps at 32,768, not gpt-oss's 131,072 |
-| A big prompt seems to hang | Not hung — quadratic prefill. 19.2k tok ≈ 81 s |
+| `400` on long prompts | Above the block's cap — 131,072 for gpt-oss, **32,768 for gemma-4 as shipped**. Raising gemma's cap is safe up to `162,496` and costs no VRAM; see *Why 32,768* first |
+| A big prompt seems to hang | Not hung — quadratic prefill on gemma-4. 9.6k ≈ 26 s, 32k ≈ 5 min, **64.7k ≈ 22 min** (the shipped cap's worst case). Raise your client timeout |
+| Context ceiling dropped after a tuning change | You raised `--max-num-batched-tokens`; it inflates the sliding-window reservation. See *gemma-4 context scaling* |
 | Same id listed twice | A `--served-model-name` value is repeated in `compose.yaml`; vLLM does not dedupe |
 | Orphan-container warning | The other engine's container lingers; `down` that folder. Never `--remove-orphans` |
 
