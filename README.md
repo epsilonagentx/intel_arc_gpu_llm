@@ -113,6 +113,12 @@ Each variable is documented (with its default) in `vllm_xpu/.env.example`.
 image is what unlocks quantised MoE such as `Qwen3-30B-A3B-GPTQ-Int4`; see
 *Choosing the inference engine*.)
 
+The **upstream `vllm_openai_xpu` engine is also `.env`-wired**, with the same
+variables plus a few of its own, and it is the engine currently validated for
+gemma-4 alongside gpt-oss-20b. It has its own operator guide —
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md) — covering model
+switching, the reasoning flags, and its measured performance figures.
+
 **Step 2 — recreate the container (from the repo root):**
 
 ```bash
@@ -262,6 +268,15 @@ Per-family behaviour:
   against `--max-model-len`.
 - **Qwen3** — hybrid; thinking on by default, `/no_think` in the user message
   disables it.
+- **gemma-4** — **opt-in, off by default.** Its chat template defaults
+  `enable_thinking` to false, so the reasoning field comes back empty until a
+  request asks for it: `"chat_template_kwargs": {"enable_thinking": true}`. An
+  empty trace on gemma-4 is this flag being unset, **not** a broken parser.
+  Server-side always-on is `--default-chat-template-kwargs '{"enable_thinking":true}'`,
+  and a request can still override it either way. Reasoning does not cost decode
+  speed here, but it consumes `max_tokens` first — allow 1500+ or you get a trace
+  and no answer. See
+  [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md).
 
 ---
 

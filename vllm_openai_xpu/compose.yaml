@@ -56,18 +56,27 @@ services:
       - "8000:8000"          # same port as the other engines (only one runs at a time)
     # ENTRYPOINT is ["vllm","serve"], so command is ARGS ONLY — no shell wrapper
     # and no `vllm serve` prefix (this differs from scaler/compose.yaml).
-    # !! --enforce-eager IS REQUIRED, and NOT for the scaler's reason. Upstream
-    # defaults cudagraph_mode to NONE but STILL runs torch.compile/Inductor
-    # (CompilationMode.VLLM_COMPILE). Those buffers are not capped by
+    # !! --enforce-eager is REQUIRED AT 128k, and NOT for the scaler's reason.
+    # Upstream defaults cudagraph_mode to NONE but STILL runs torch.compile/
+    # Inductor (CompilationMode.VLLM_COMPILE). Those buffers are not capped by
     # gpu-memory-utilization, so at 128k they starved the KV pool to 2.89 GiB and
-    # boot died needing 3.1 GiB. Eager restores it to ~4.3 GiB. ../UPSTREAM_VLLM_NOTES.md §3
+    # boot died needing 3.1 GiB. Eager restores it to ~4.3 GiB.
+    # It is NOT required at 32k: MEASURED 2026-09-16 on gemma-4, compiled mode
+    # boots with the full 4.25 GiB pin (78,433 tok / 2.39x intact) and is
+    # +7.1% decode (52.0 -> 55.7 tok/s). Set VLLM_EAGER_FLAG=--no-enforce-eager
+    # to take it; the flag is passed whole because argparse builds this as a
+    # BooleanOptionalAction, so `--enforce-eager=False` does NOT parse.
+    # Prefill is UNCHANGED by it (still quadratic — that is the attention
+    # backend, not launch overhead). VLLM_XPU_ENABLE_XPU_GRAPH=1 only works in
+    # compiled mode (it is a no-op under eager) and adds a further +0.5% for
+    # 1.54 GiB of capture memory — not worth the pool. ../UPSTREAM_VLLM_NOTES.md §3
     command:
       - "${VLLM_MODEL:-openai/gpt-oss-20b}"
       - "--host=0.0.0.0"
       - "--port=8000"
       - "--max-model-len=${VLLM_MAX_MODEL_LEN:-131072}"
       - "--gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
-      - "--enforce-eager"
+      - "${VLLM_EAGER_FLAG:---enforce-eager}"
       # util 0.80 alone strands ~4.5 GiB of the 22.71 GiB card (1.29x pool). This is
       # the byte value the V2 runner printed for "fully utilize gpu memory", MEASURED
       # at 338,928 tokens / 2.59x @128k on ~0.15 GiB of headroom — safe only because
@@ -77,9 +86,24 @@ services:
       # Canonical spelling: the log advises --kv-cache-memory, which parses only
       # as an argparse prefix abbreviation. ../UPSTREAM_VLLM_NOTES.md §10.3
       - "--kv-cache-memory-bytes=${VLLM_KV_CACHE_MEMORY:-8603448832}"
+      # Server-side default for chat-template variables, applied when a request
+      # sends no chat_template_kwargs of its own. Turns gemma-4's opt-in
+      # reasoning on globally: '{"enable_thinking":true}'. Default `null` is a
+      # literal JSON null (the arg is parsed with json.loads) and is a no-op —
+      # `null` not `{}` because a brace in a ${VAR:-default} breaks Compose
+      # interpolation. No-op for gpt-oss, which always reasons.
+      - "--default-chat-template-kwargs=${VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS:-null}"
       - "--reasoning-parser=${VLLM_REASONING_PARSER:-openai_gptoss}"
       - "--enable-auto-tool-choice"
       - "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-openai}"
+      # The id clients call it by. Keep it TRUTHFUL — one name per model, so a
+      # swap is visible downstream rather than silently changing the model
+      # behind a fixed label. A swap therefore requires updating the consumer's
+      # model mapping; that is intentional, because the two models differ in
+      # context limit and prefill cost (see ../README.md and ./README.md).
+      # Serving a second id is possible (the arg is nargs="+") but needs another
+      # literal entry here — Compose cannot word-split one variable, and vLLM
+      # does NOT dedupe, so a repeated name gets listed twice.
       - "--served-model-name=${VLLM_SERVED_MODEL_NAME:-gpt-oss-20b}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]

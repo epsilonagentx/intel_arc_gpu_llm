@@ -8,19 +8,51 @@
 #   ./smoke.sh                                   # localhost:8000, model gpt-oss-20b
 #   VLLM_ENDPOINT=http://192.168.x.x:8000 ./smoke.sh
 #   MODEL=qwen3-32b ./smoke.sh                   # after a model swap
+#   THINKING=1 ./smoke.sh                        # force reasoning ON
+#   THINKING=0 ./smoke.sh                        # assert reasoning can be turned OFF
+#
+# THINKING is tri-state and drives check 3 (`chat_template_kwargs.enable_thinking`):
+#   auto (default) — send nothing; asserts the DEPLOYED default reasons. Passes on
+#                    gpt-oss (always reasons) and on gemma-4 only when the server
+#                    was started with --default-chat-template-kwargs enabling it.
+#   1              — force on;  asserts a reasoning trace comes back
+#   0              — force off; asserts reasoning is SUPPRESSED (the check inverts),
+#                    which proves a request can override the server-side default
+# MODEL is auto-detected from /v1/models when unset, so this keeps working across
+# a model swap without a stale hardcoded name.
 set -uo pipefail
 
 ENDPOINT="${VLLM_ENDPOINT:-http://localhost:8000}"
-MODEL="${MODEL:-gpt-oss-20b}"
+THINKING="${THINKING:-auto}"
+
+# Default to whatever the engine actually serves, so the script keeps working
+# across a model swap. A hardcoded default would fail every check after `.env`
+# changes, and report it as a model fault rather than a stale script default.
+MODEL="${MODEL:-}"
+MODEL_SRC="explicit"
+if [[ -z "$MODEL" ]]; then
+    MODEL=$(curl -s --max-time 10 "$ENDPOINT/v1/models" 2>/dev/null \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null) || true
+    MODEL_SRC="auto-detected"
+fi
+if [[ -z "$MODEL" ]]; then
+    echo "ERROR: no model id readable from $ENDPOINT/v1/models — is the engine up?" >&2
+    echo "       Start it, or pass one explicitly: MODEL=<id> $0" >&2
+    exit 1
+fi
 
 echo "Endpoint: $ENDPOINT"
-echo "Model:    $MODEL"
+echo "Model:    $MODEL ($MODEL_SRC)"
+echo "Thinking: $THINKING"
 echo
 
-python3 - "$ENDPOINT" "$MODEL" <<'PY'
+python3 - "$ENDPOINT" "$MODEL" "$THINKING" <<'PY'
 import json, sys, urllib.request
 
-endpoint, model = sys.argv[1], sys.argv[2]
+endpoint, model, thinking = sys.argv[1], sys.argv[2], sys.argv[3]   # "auto" | "1" | "0"
+if thinking not in ("auto", "1", "0"):
+    print(f"ERROR: THINKING must be auto, 1 or 0 (got {thinking!r})", file=sys.stderr)
+    sys.exit(1)
 fails = 0
 
 def get(path):
@@ -33,19 +65,32 @@ def chat(payload):
         headers={"Content-Type": "application/json"},
         data=json.dumps(payload).encode(),
     )
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return json.load(r)["choices"][0]["message"]
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return json.load(r)["choices"][0]["message"]
+    except urllib.error.HTTPError as e:
+        # Surface the server's own message; a bare HTTPError hides a 404 on the
+        # model name behind what looks like a generation failure.
+        raise RuntimeError(f"HTTP {e.code}: {e.read().decode(errors='replace')[:200]}") from None
 
-def check(ok, label):
+def check(ok, label, fail_hint=""):
+    """fail_hint is appended only when the check fails, so a PASS stays clean."""
     global fails
-    print(("PASS" if ok else "FAIL") + f": {label}")
+    print(("PASS" if ok else "FAIL") + f": {label}" + ("" if ok else fail_hint))
     if not ok:
         fails += 1
 
 # 1. model is served
 try:
-    ids = [m["id"] for m in get("/v1/models").get("data", [])]
+    cards = get("/v1/models").get("data", [])
+    ids = [m["id"] for m in cards]
     print("served:", ids)
+    # --served-model-name is a label and need not match the checkpoint, so print
+    # `root` too: it is the only place the actually-loaded repo is visible here.
+    for c in cards:
+        print(f"  {c['id']} -> {c.get('root')}  (max_model_len={c.get('max_model_len')})")
+    if len(ids) != len(set(ids)):
+        print("WARNING: duplicate ids in /v1/models — a served-model-name is repeated")
     check(model in ids, f"{model} is served")
 except Exception as e:
     check(False, f"/v1/models reachable ({e})")
@@ -62,12 +107,24 @@ except Exception as e:
 
 # 3. reasoning trace present — vLLM puts it in message.reasoning, NOT reasoning_content
 try:
-    m = chat({"model": model, "temperature": 0, "max_tokens": 4096,
-              "messages": [{"role": "user", "content":
-                            "A farmer has 17 sheep; all but 9 run away. How many are left? Think step by step."}]})
+    payload = {"model": model, "temperature": 0, "max_tokens": 4096,
+               "messages": [{"role": "user", "content":
+                             "A farmer has 17 sheep; all but 9 run away. How many are left? Think step by step."}]}
+    if thinking in ("1", "0"):
+        payload["chat_template_kwargs"] = {"enable_thinking": thinking == "1"}
+    m = chat(payload)
     reasoning = m.get("reasoning") or m.get("reasoning_content")
     print("reasoning len:", len(reasoning or ""))
-    check(bool(reasoning), "reasoning trace populated (message.reasoning)")
+    if thinking == "0":
+        # Inverted on purpose: THINKING=0 tests that a request can SUPPRESS
+        # reasoning, including overriding a server-side enable_thinking default.
+        check(not reasoning, "reasoning suppressed by request (enable_thinking=false)",
+              " — request-level override was ignored; the server default won")
+    else:
+        hint = ("" if thinking == "1" else
+                " — reasoning is opt-in on this model: retry with THINKING=1, or set"
+                " VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS='{\"enable_thinking\":true}' to default it on")
+        check(bool(reasoning), "reasoning trace populated (message.reasoning)", hint)
 except Exception as e:
     check(False, f"reasoning check ({e})")
 
