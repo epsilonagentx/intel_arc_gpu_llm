@@ -1,9 +1,9 @@
-# Local LLM stack — developer notes (the *why*)
+# Local LLM stack — why it is configured this way
 
 Why the config in the engine compose files is the way it is. This file covers
 the two **gpt-oss-20b** engines, `vllm_xpu/compose.yaml` and
-`scaler/compose.yaml`; the third engine has its own rationale doc,
-[UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md). For how to *operate* the stack
+`scaler/compose.yaml`; the third engine keeps its rationale in its own README,
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md). For how to *operate* the stack
 see [README.md](README.md); for a configuration overview see
 [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
 
@@ -33,11 +33,11 @@ holding VRAM and a freeze was possible.
 compile buffers. To grow capacity, raise `--max-model-len` and re-check real
 VRAM — **never** just bump util, or you'll OOM on the edge again.
 
-**Both gpt-oss engines now size the KV pool explicitly** with
+**`scaler/` and `vllm_openai_xpu/` size the KV pool explicitly** with
 `--kv-cache-memory-bytes` instead of letting util decide it. That value is
 absolute and **OOMs rather than shrinking**, so it is model- and runner-specific;
-see [SCALER_NOTES.md](SCALER_NOTES.md) and
-[UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md) §5.
+see [scaler/README.md](scaler/README.md) and
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*.
 
 ## Why 128k context fits
 
@@ -110,7 +110,7 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 - **Device passthrough differs from `0.17.0-xpu`:** 0.21.0 requires the whole
   `/dev/dri` **plus** a `/dev/dri/by-path:ro` mount (oneCCL enumerates via
   `by-path` on warm-up) or it won't boot. Details in `vllm_xpu/compose.yaml` and the
-  README's *Upgrading the vLLM image*.
+  [vllm_xpu/README.md](vllm_xpu/README.md)'s *Upgrading the image*.
 - **Gemma 4 arches are now registered** (`gemma4` / `gemma4_mm`) — unlike
   `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate.
   The `qwen3` and `openai_gptoss` reasoning parsers are present as before.
@@ -118,8 +118,8 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
   > engine (`vllm_openai_xpu/`, v0.29.0) from an offline int4 **group-32**
   > checkpoint, at 131,072 context. The XPU expert kernel accepts only group-32
   > or channelwise int4 — that narrowness, not a kernel gap, was the real
-  > constraint. See [UPSTREAM_VLLM_NOTES.md](UPSTREAM_VLLM_NOTES.md) §11 and
-  > [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md). This *scaler /
+  > constraint. See [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md),
+  > *gemma-4 in depth*. This *scaler /
   > `vllm_xpu` stack* still stays on gpt-oss-20b.
 - Reasoning trace field is still `message.reasoning`, not `reasoning_content`
   (re-verified on 0.21.0) — see [README.md](README.md) for the consumer-parsing
@@ -175,13 +175,13 @@ B60** — **85.6 tok/s** on `./bench.sh 400` at ~72 ms TTFT, +21.2% over
 `0.21.0-b3` and +5.9% over `0.14.0-b8.3.2`, the previous best. `smoke.sh` is ALL
 PASS, so the inherited parser flag names survived the base jump. The
 image-by-image table, the bench-hygiene rules that make those numbers comparable,
-and the KV-pool figures are all in [SCALER_NOTES.md](SCALER_NOTES.md) §3.
+and the KV-pool figures are all in [scaler/README.md](scaler/README.md) §3.
 
 **b1 → b2 is a bug-fix release, and it is measurably a no-op here**: identical
 tok/s, TTFT, KV pool and VRAM budget, `smoke.sh` still ALL PASS. All four of its
 named fixes land in paths gpt-oss-20b does not use — MTP (which this model cannot
 run at all), `sym_int4`, and block-FP8. Take it as cheap insurance and expect no
-change; the reasoning is in [SCALER_NOTES.md](SCALER_NOTES.md) §2.
+change; the reasoning is in [scaler/README.md](scaler/README.md) §2.
 
 **The pool is now sized explicitly, not left as the util remainder.** Adding
 `--kv-cache-memory-bytes 8647520256` on 2026-09-10 claimed the 3.87 GiB that
@@ -193,7 +193,7 @@ because decode is bandwidth-bound. Three consequences worth carrying: the flag
 **absolute and image-specific** so it must be re-derived on an image bump, and
 the CLI flag is `--kv-cache-memory-bytes` even though the engine's own log advises
 `--kv-cache-memory`. Full measurement and the re-derive procedure:
-[SCALER_NOTES.md](SCALER_NOTES.md) §3.
+[scaler/README.md](scaler/README.md) §3.
 
 The earlier `b3 → 0.26.0-b1` step *was* a vLLM *base* jump, 0.21.0 → 0.26.0. The
 supported-model table is nearly unchanged from `b3`: three rows added
@@ -204,7 +204,7 @@ is retained; **no release in this line touches gpt-oss**, so any change in
 gpt-oss-20b behaviour comes from the newer base, not the fork's own commits.
 
 Two version-coupled settings in `scaler/compose.yaml` were re-checked against
-both 0.26.0 images on 2026-09-10 (method in [SCALER_NOTES.md](SCALER_NOTES.md)
+both 0.26.0 images on 2026-09-10 (method in [scaler/README.md](scaler/README.md)
 §7): `VLLM_QUANTIZE_Q40_LIB`'s `.so` path is **correct and unchanged**, closing a
 long-standing unknown, while `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` turned out to be
 **dead** — absent from both images and deleted from upstream's README at b2 — and
@@ -228,7 +228,7 @@ correctness-verified experiment, not a default to flip. The fork's experimental
 XPU graph support (added in `0.21.0-b1`) has its own switch,
 `VLLM_XPU_ENABLE_XPU_GRAPH` — **tested 2026-09-03 and it is a no-op while
 `--enforce-eager` is set**, so the boot-log warning recommending it is safe to
-ignore. Measurements in [SCALER_NOTES.md](SCALER_NOTES.md) §4.
+ignore. Measurements in [scaler/README.md](scaler/README.md) §4.
 gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass `--quantization`. The fork
 inherits upstream's parser flag names; if it renamed them the server fails fast at
 startup with a clear arg error.

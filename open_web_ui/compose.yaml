@@ -25,8 +25,9 @@
 #   - Same host (default): host.docker.internal -> host gateway (Linux), so the
 #     URL below hits the vllm container's published :8000.
 #   - Different host: set OPENAI_API_BASE_URL to http://<vllm-host>:8000/v1.
-#   - Scaler engine: no change needed — scaler/compose.yaml also publishes
-#     :8000 (only one of the two engines runs at a time on the single GPU).
+#   - Swapping engines: no change needed — all three engine folders publish
+#     :8000 and only one runs at a time on the single GPU, so this URL is
+#     stable whichever of them is up.
 #
 # Its own project name keeps the data volume predictable
 # (open-webui_open-webui-data) instead of taking the checkout-folder name.

@@ -7,7 +7,7 @@
 # !! MEASURED on this B60 2026-09-09: 0.29.0 + V2 runner + the pinned pool below
 # !! = 83.5 tok/s, 338,928-token KV pool (2.59x @128k), smoke ALL PASS.
 # !! `restart: "no"` on purpose.
-# Rationale, verified upstream facts, what to measure:  ../UPSTREAM_VLLM_NOTES.md
+# Rationale, verified upstream facts, what to measure:  ./README.md
 name: llm   # SAME project as vllm_xpu/scaler ON PURPOSE — shares the hf-cache volume
 
 services:
@@ -40,12 +40,12 @@ services:
       ZES_ENABLE_SYSMAN: "1"
       # MUST be 0 with the V2 runner below: 1 SEGFAULTS at boot inside the SYCL
       # persistent code-cache read. Costs a kernel rebuild each boot (~70 s
-      # total). ../UPSTREAM_VLLM_NOTES.md §10
+      # total). ./README.md "SYCL_CACHE_PERSISTENT=0"
       SYCL_CACHE_PERSISTENT: "${SYCL_CACHE_PERSISTENT:-0}"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"    # platform auto-sets this; explicit for parity
       no_proxy: "localhost,127.0.0.1"
       # Graph mode is single-GPU-only upstream and defaults OFF. Flipping this to
-      # 1 is the one speed lever this engine adds. ../UPSTREAM_VLLM_NOTES.md §3
+      # 1 is the one speed lever this engine adds. ./README.md "Performance"
       VLLM_XPU_ENABLE_XPU_GRAPH: "${VLLM_XPU_ENABLE_XPU_GRAPH:-0}"
       # V2 is upstream's default from 0.29.0 on, and MEASURED faster and leaner
       # here (+1.1% tok/s, non-torch 1.50 -> 1.03 GiB). 0 pins V1 for A/B work.
@@ -71,7 +71,7 @@ services:
     # is the attention backend, not launch overhead).
     # VLLM_XPU_ENABLE_XPU_GRAPH=1 only works in compiled mode (it is a no-op
     # under eager) and adds a further +0.5% for 1.54 GiB of capture memory --
-    # not worth the pool. ../UPSTREAM_VLLM_NOTES.md §3
+    # not worth the pool. ./README.md "Performance"
     command:
       - "${VLLM_MODEL:-openai/gpt-oss-20b}"
       - "--host=0.0.0.0"
@@ -86,7 +86,7 @@ services:
       # different value (7117934592 -> 280,425 tok). To go back to util-based sizing,
       # comment this line OUT: a blank VLLM_KV_CACHE_MEMORY resolves to the default.
       # Canonical spelling: the log advises --kv-cache-memory, which parses only
-      # as an argparse prefix abbreviation. ../UPSTREAM_VLLM_NOTES.md §10.3
+      # as an argparse prefix abbreviation. ./README.md "--kv-cache-memory-bytes"
       - "--kv-cache-memory-bytes=${VLLM_KV_CACHE_MEMORY:-8603448832}"
       # Server-side default for chat-template variables, applied when a request
       # sends no chat_template_kwargs of its own. Turns gemma-4's opt-in

@@ -37,7 +37,7 @@
   ## Style
 
   - Match the style of the file you're editing.
-  - Docs are split by audience — put content where it belongs:
+  - Each doc has one job — put content where it belongs:
     `README.md` (operator how-to), `DEVELOPER.md` (the *why*),
     `INTEL_ARC_B60.md` (current state).
   - Shell scripts: keep them dependency-light.

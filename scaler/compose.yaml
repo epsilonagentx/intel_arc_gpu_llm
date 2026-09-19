@@ -5,17 +5,17 @@
 #
 # !! SINGLE GPU — run EITHER this OR vllm_xpu/compose.yaml, never both.
 # Swap procedure and verification:  ../README.md
-# Rationale, measurements, tested-and-rejected flags:  ../SCALER_NOTES.md
+# Rationale, measurements, tested-and-rejected flags:  ./README.md
 name: llm   # SAME project as vllm_xpu ON PURPOSE — shares the hf-cache volume
 
 services:
   vllm-scaler:
     # Exact pin — upstream says do NOT use :latest, and here `latest` still
-    # resolves to a much older image. See ../SCALER_NOTES.md §2.
+    # resolves to a much older image. See ./README.md §2.
     image: intel/llm-scaler-vllm:0.26.0-b2
     container_name: vllm-scaler
     restart: unless-stopped
-    # Whole /dev/dri + the by-path bind below are BOTH required (oneCCL). ../SCALER_NOTES.md §5
+    # Whole /dev/dri + the by-path bind below are BOTH required (oneCCL). ./README.md §5
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -28,7 +28,7 @@ services:
       - hf-cache:/root/.cache/huggingface      # shared with vllm_xpu — weights not re-downloaded
       # Compile cache. Under --enforce-eager nothing is compiled, so this only
       # ever holds hash-guarded model metadata — no need to clear on an image
-      # bump. Measured: ../SCALER_NOTES.md §6
+      # bump. Measured: ./README.md §6
       - vllm-scaler-cache:/root/.cache/vllm
     environment:
       HF_HOME: /root/.cache/huggingface
@@ -36,22 +36,22 @@ services:
       SYCL_CACHE_PERSISTENT: "1"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"
       no_proxy: "localhost,127.0.0.1"
-      # Online-quantisation knobs — inert for MXFP4 gpt-oss-20b. ../SCALER_NOTES.md §7
+      # Online-quantisation knobs — inert for MXFP4 gpt-oss-20b. ./README.md §7
       # (the Q40 lib path is image-specific; verified present on this pin)
       VLLM_QUANTIZE_Q40_LIB: "/opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so"
       VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
       HF_TOKEN: "${HF_TOKEN:-}"        # empty = anonymous; no secret in this file
     ports:
-      - "8000:8000"          # same port as the base engine (only one runs at a time)
+      - "8000:8000"          # same port as the other engines (only one runs at a time)
     # Default entrypoint drops to a shell, so invoke `vllm serve` explicitly.
     entrypoint: ["/bin/bash", "-lc"]
     # !! --enforce-eager is MANDATORY, not a safe default: compiled mode boots
     # fine but silently returns EMPTY content+reasoning. Do not remove it
-    # without re-verifying correctness. ../SCALER_NOTES.md §4
+    # without re-verifying correctness. ./README.md §4
     # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
     # --kv-cache-memory-bytes OVERRIDES --gpu-memory-utilization (which is kept
     # only as the fallback if the byte value is removed). The value is absolute
-    # and image-specific — re-derive it on an image bump. ../SCALER_NOTES.md §3
+    # and image-specific — re-derive it on an image bump. ./README.md §3
     command:
       - |
         vllm serve openai/gpt-oss-20b \

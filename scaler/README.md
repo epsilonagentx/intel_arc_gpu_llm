@@ -1,18 +1,22 @@
 # llm-scaler engine notes
 
 Rationale, measurements, and **tested-then-rejected** configurations for the
-`llm-scaler` engine in [`scaler/compose.yaml`](scaler/compose.yaml). These notes
-used to live as ~270 lines of comments inside that file, which made the actual
-configuration hard to read. The stock engine (`vllm_xpu/`) documents itself
-inline and is only referenced here for comparison.
+`llm-scaler` engine in [`compose.yaml`](compose.yaml). These notes used to live
+as ~270 lines of comments inside that file, which made the actual configuration
+hard to read.
+
+The other two engines have their own READMEs in their own folders —
+[`vllm_xpu/`](../vllm_xpu/README.md) for the stock Intel image and
+[`vllm_openai_xpu/`](../vllm_openai_xpu/README.md) for upstream's. They come up
+here only for comparison.
 
 How this file differs from the other docs:
 
-| Doc | Audience | Answers |
-|-----|----------|---------|
-| [README.md](README.md) | operator | How do I run, swap, and verify the stack? |
-| [DEVELOPER.md](DEVELOPER.md) | developer | How is it put together, and why these values? |
-| **SCALER_NOTES.md** (this file) | whoever changes a scaler flag | What has already been tried, measured, and ruled out? |
+| Doc | What it covers |
+|-----|----------------|
+| [README.md](../README.md) | operator | How do I run, swap, and verify the stack? |
+| [DEVELOPER.md](../DEVELOPER.md) | developer | How is it put together, and why these values? |
+| **scaler/README.md** (this file) | whoever changes a scaler flag | What has already been tried, measured, and ruled out? |
 
 Read this before "improving" a flag — most of the obvious ideas have been tested
 on real hardware and rejected for recorded reasons. All measurements are on a
@@ -90,6 +94,77 @@ against the wrong one is worse than no benchmark.
 
 ---
 
+## Models, and how to swap one
+
+**This engine is not `.env`-wired, and that is the main thing to know before
+touching its model.** `vllm_xpu/` and `vllm_openai_xpu/` read their model from a
+`.env` file; here the model and every flag that goes with it are written
+literally into the `command:` block of [`compose.yaml`](compose.yaml):
+
+```yaml
+command:
+  - |
+    vllm serve openai/gpt-oss-20b \
+      --max-model-len 131072 \
+      --gpu-memory-utilization 0.80 \
+      --kv-cache-memory-bytes 8647520256 \
+      --enforce-eager \
+      --reasoning-parser openai_gptoss \
+      --tool-call-parser openai \
+      --served-model-name gpt-oss-20b
+```
+
+So a swap is an edit to that file, then:
+
+```bash
+docker compose up -d vllm-scaler
+```
+
+No `--force-recreate` needed, unlike the `.env`-wired engines: editing
+`compose.yaml` changes the service's config hash, so Compose recreates the
+container by itself. That also means there is no way to "forget" to recreate
+here — the failure mode the other two have doesn't exist.
+
+There is no `.env.example` in this folder on purpose. These flags are not
+independent of one another, and three of them will break the engine or silently
+corrupt its output if carried across to a different model:
+
+| flag | why it does not travel |
+|---|---|
+| `--enforce-eager` | **Mandatory for gpt-oss-20b.** Compiled mode boots fine and then returns empty content and reasoning — a silent correctness failure, not a crash. Read §4 before removing it for any model. |
+| `--kv-cache-memory-bytes 8647520256` | Absolute, and derived for *these* weights on *this* image. It OOMs rather than shrinking. Re-derive it per §3. |
+| no `--quantization` | gpt-oss-20b ships pre-quantised MXFP4, so passing `--quantization` is wrong. A model that needs online quantisation requires it — which is the opposite mistake. |
+
+`--reasoning-parser` and `--tool-call-parser` are model-family specific and fail
+**quietly**: the wrong value gives you an empty reasoning field or unparsed tool
+calls, not an error. Re-run `./smoke.sh` after any model change — that is what it
+is for.
+
+### What this image can serve that the stock one cannot
+
+The `llm-scaler` fork carries Arc B-series tuning plus quantised-MoE paths the
+stock `intel/vllm` image lacks — online INT4 and FP8 serving through the
+`VLLM_QUANTIZE_Q40_LIB` shim (§7), and a far longer validated model list
+including the `Qwen3-30B-A3B` family. Intel's own table is the authority, and per
+this file's first convention it is **linked, never copied**, so it cannot go
+stale here:
+[supported models §3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#3-supported-models).
+
+Sizing is the real constraint rather than support: the card holds ~22.7 GiB, and
+most 27–30B int4 candidates land at 14–17 GiB of weights with several times
+gpt-oss's per-token KV cost, which trades 128k of context down to roughly 20–32k.
+Check both axes before believing a model "fits".
+
+### One model to not re-try here
+
+`gemma-4-26B-A4B-it` does **not** work on this engine on a single B60. Two
+separate walls, both recorded with their exact errors in §8.1 — don't spend the
+afternoon rediscovering them. It runs on
+[`vllm_openai_xpu/`](../vllm_openai_xpu/README.md), which is the reason that
+folder exists.
+
+---
+
 ## 2. Image pin provenance
 
 Upstream says **do not use `:latest`**, and on this project `latest` is badly
@@ -136,8 +211,8 @@ does matter if this engine ever serves `sym_int4` or a block-FP8 checkpoint, bot
 of which had silent-wrong-output bugs until now.
 
 The earlier jump from `0.21.0-b3` *was* a vLLM **base** change, 0.21.0 → 0.26.0.
-**Side effect, still live:** the stock engine is on 0.21.0, so the two engines do
-not share a base and a base-vs-scaler A/B is confounded by a five-minor engine
+**Side effect, still live:** the stock engine is on 0.21.0, so the scaler and the
+stock engine do not share a base and a base-vs-scaler A/B is confounded by a five-minor engine
 gap — the opposite of why the 0.21.0 bump was originally taken.
 
 No release in this line contains a gpt-oss fix (the notes are all Qwen3.6 /
@@ -262,7 +337,7 @@ and the 0.00 GiB row above is the proof (§4).
 **Capacity is free; speed is unaffected.** Decode is VRAM-*bandwidth*-bound, not
 capacity-bound, so a 1.86× pool buys concurrent long requests and nothing else.
 The same lever behaved identically on the upstream engine — 1.29× → 2.59× for
-82.4 → 82.3 tok/s ([`UPSTREAM_VLLM_NOTES.md`](UPSTREAM_VLLM_NOTES.md) §10.3).
+82.4 → 82.3 tok/s ([`vllm_openai_xpu/README.md`](../vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*).
 Note what it does *not* buy: 131,072 is already gpt-oss-20b's full window, so
 there is no context to gain, only parallelism.
 
@@ -690,7 +765,7 @@ and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/v
   measured throughput: `bench.sh` is single-stream, so what has been proven is
   that the pool allocates and single-stream stays correct — not that two
   concurrent 128k requests actually run. Same caveat the upstream engine carries
-  ([`UPSTREAM_VLLM_NOTES.md`](UPSTREAM_VLLM_NOTES.md) §10.3).
+  ([`vllm_openai_xpu/README.md`](../vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*).
 - `healthcheck.start_period` is still `7200s`, which was raised for the gemma-4
   experiment's ~52 GB download-and-quantise first boot. gpt-oss-20b only needs
   the ~1800s that covered its silent XPU cold start.
