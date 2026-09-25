@@ -48,14 +48,14 @@ cut. Nothing was added — the supported-models table is unchanged from b1.
 | Topic | Link |
 |-------|------|
 | Supported models table | [§3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#3-supported-models) |
-| INT4 / FP8 online quantisation | [§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#22-int4-and-fp8-quantized-online-serving) |
+| INT4 / FP8 online quantization | [§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#22-int4-and-fp8-quantized-online-serving) |
 | Pulling / running the container | [§1.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#13-pulling-and-running-the-vllm-docker-container) |
 | Finding maximum context length | [§2.7](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#27-finding-maximum-context-length) |
 | gemma-4 / diffusiongemma reference commands | [§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma) |
 | FP8 KV cache | [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#35-fp8-kv-cache) |
 | MTP (speculative decoding) | [§3.6](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#36-mtp-enable) |
 | Performance tuning / NUMA | [§5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#5-performance-tuning) |
-| ~~OOM during online quantisation~~ | **§4.2 deleted at b2.** Last version that had it: [`vllm-0.26.0-b1` §4.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#42-out-of-memory-while-online-quantization) |
+| ~~OOM during online quantization~~ | **§4.2 deleted at b2.** Last version that had it: [`vllm-0.26.0-b1` §4.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b1/vllm/README.md#42-out-of-memory-while-online-quantization) |
 
 Other upstream sources:
 
@@ -66,7 +66,7 @@ Other upstream sources:
 | FAQ | <https://github.com/intel/llm-scaler/blob/main/vllm/FAQ.md> |
 | Known issues | <https://github.com/intel/llm-scaler/blob/main/vllm/KNOWN_ISSUES.md> |
 | Published image tags | <https://hub.docker.com/r/intel/llm-scaler-vllm/tags> |
-| vLLM on KV-cache quantisation | <https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache.html> |
+| vLLM on KV-cache quantization | <https://docs.vllm.ai/en/latest/features/quantization/quantized_kvcache.html> |
 
 ---
 
@@ -133,7 +133,7 @@ corrupt its output if carried across to a different model:
 |---|---|
 | `--enforce-eager` | **Mandatory for gpt-oss-20b.** Compiled mode boots fine and then returns empty content and reasoning — a silent correctness failure, not a crash. Read §4 before removing it for any model. |
 | `--kv-cache-memory-bytes 8647520256` | Absolute, and derived for *these* weights on *this* image. It OOMs rather than shrinking. Re-derive it per §3. |
-| no `--quantization` | gpt-oss-20b ships pre-quantised MXFP4, so passing `--quantization` is wrong. A model that needs online quantisation requires it — which is the opposite mistake. |
+| no `--quantization` | gpt-oss-20b ships pre-quantized MXFP4, so passing `--quantization` is wrong. A model that needs online quantization requires it — which is the opposite mistake. |
 
 `--reasoning-parser` and `--tool-call-parser` are model-family specific and fail
 **quietly**: the wrong value gives you an empty reasoning field or unparsed tool
@@ -142,7 +142,7 @@ is for.
 
 ### What this image can serve that the stock one cannot
 
-The `llm-scaler` fork carries Arc B-series tuning plus quantised-MoE paths the
+The `llm-scaler` fork carries Arc B-series tuning plus quantized-MoE paths the
 stock `intel/vllm` image lacks — online INT4 and FP8 serving through the
 `VLLM_QUANTIZE_Q40_LIB` shim (§7), and a far longer validated model list
 including the `Qwen3-30B-A3B` family. Intel's own table is the authority, and per
@@ -200,7 +200,7 @@ list five items; all four specific ones are in paths gpt-oss-20b does not use:
 |---|---|
 | Fix prefix caching with MTP | **No** — prefix caching is on, but MTP is not (and cannot be, §9) |
 | Improve MTP decoding performance | **No** — same reason |
-| Fix incorrect output for `sym_int4` models | **No** — gpt-oss-20b is pre-quantised MXFP4, so `--quantization` is never passed |
+| Fix incorrect output for `sym_int4` models | **No** — gpt-oss-20b is pre-quantized MXFP4, so `--quantization` is never passed |
 | Fix block-FP8 output corruption during concurrent decoding | **No** — not a block-FP8 checkpoint, and `--kv-cache-dtype` is unset (§8.2) |
 | "Bug fixes" | Unspecified |
 
@@ -445,7 +445,7 @@ Consequences:
   never flip it blind. The fork's "experimental XPU graph" support, added in
   `0.21.0-b1`, is a **different** switch and is covered below.
 
-gpt-oss-20b is MXFP4 (pre-quantised) — **do not pass `--quantization`**.
+gpt-oss-20b is MXFP4 (pre-quantized) — **do not pass `--quantization`**.
 
 ### XPU Graph — tested 2026-09-03, a **no-op** under eager. Do not set it.
 
@@ -614,11 +614,11 @@ exposes are harmless — they are not SYCL XPUs, so there is no wrong-GPU risk.
 `VLLM_WORKER_MULTIPROC_METHOD=spawn` and `shm_size: 32g` follow upstream's
 recommendations — see [§1.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#13-pulling-and-running-the-vllm-docker-container).
 `VLLM_QUANTIZE_Q40_LIB` and `VLLM_ALLOW_LONG_MAX_MODEL_LEN` are the
-online-quantisation set, documented at
+online-quantization set, documented at
 [§2.2](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#22-int4-and-fp8-quantized-online-serving);
-both are **inert for gpt-oss-20b**, which is pre-quantised MXFP4.
+both are **inert for gpt-oss-20b**, which is pre-quantized MXFP4.
 
-Only the parts where **behaviour here differs from the docs** are recorded:
+Only the parts where **behavior here differs from the docs** are recorded:
 
 | Variable | Finding | Verified |
 |----------|-------------|----------|
@@ -661,8 +661,8 @@ NotImplementedError: No Unquantized MoE backend supports the deployment configur
 ```
 
 Raised in `model_loader/utils.py` `initialize_model` — at model *construction*,
-before a single weight is read. The Gemma4 MoE module is built unquantised
-whatever `--quantization` says, then asks for an XPU backend for an unquantised
+before a single weight is read. The Gemma4 MoE module is built unquantized
+whatever `--quantization` says, then asks for an XPU backend for an unquantized
 fused-MoE, and there is none. No `--quantization` value fixes it.
 
 **Wall 2 — host RAM, and this one is decisive.** Upstream's documented route
@@ -674,18 +674,18 @@ touching the GPU:
 RuntimeError: unable to mmap 49907246508 bytes ... Cannot allocate memory
 ```
 
-Google ships that checkpoint as **one 49.9 GB shard**, and online quantisation
+Google ships that checkpoint as **one 49.9 GB shard**, and online quantization
 must open the full-precision file. With 30 GiB RAM + 8 GiB swap under
 `vm.overcommit_memory=0`, the kernel refuses a single 49.9 GB mapping outright.
-**Online quantisation on this box is capped by host RAM, not VRAM** — check the
+**Online quantization on this box is capped by host RAM, not VRAM** — check the
 *largest shard*, not the total, before reaching for util/context knobs.
 Workarounds if ever needed: `vm.overcommit_memory=1`, ~32 GB more swap, or best,
-a pre-quantised normally-sharded checkpoint.
+a pre-quantized normally-sharded checkpoint.
 
 **Checkpoint findings** (the checkpoint was never the problem):
 
 - `Intel/gemma-4-26B-A4B-it-int4-AutoRound` is fully int4 — 11,520 expert
-  `qweight` tensors, zero unquantised expert weights, 8 shards, 15.4 GB,
+  `qweight` tensors, zero unquantized expert weights, 8 shards, 15.4 GB,
   **largest shard 2.1 GB**. Verified via its HF `index.json`. That sharding
   would sidestep Wall 2 entirely.
 - Its `quant_method` is `auto-round`, which b3's registry did not contain, but
@@ -706,7 +706,7 @@ One new lever, **low confidence**: vLLM 0.26.0's registry adds `auto_gptq` and
 `auto_awq` as first-class methods (`AutoGPTQConfig`/`AutoAWQConfig`), neither of
 which existed in 0.21.0. There is still no `auto_round.py` upstream, and the b3
 failure was in MoE *construction*, so this only helps if the fork now ships a
-quantised-Gemma4 MoE XPU kernel. Not pursued.
+quantized-Gemma4 MoE XPU kernel. Not pursued.
 
 `gemma-4-12B-it` remains the plausible single-B60 gemma-4 path — dense and TP=1
 in upstream's own reference command ([§3.3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#33-reference-commands-for-running-gemma-4-models-and-diffusiongemma)).
@@ -735,7 +735,7 @@ regression is gone as of `0.26.0-b1`, so the only remaining motive for fp8 KV is
 long-context concurrency.
 
 ⚠ **b2 changes the risk calculus slightly:** its release notes fix "block-FP8
-output corruption during concurrent decoding". That is weight quantisation, not
+output corruption during concurrent decoding". That is weight quantization, not
 `--kv-cache-dtype`, so it is not a fix *for* this flag — but it is a reminder
 that the fork's fp8 paths were carrying concurrency bugs through the b1 pin. If
 fp8 KV is ever re-added, validate it under actual concurrent load, not just
@@ -767,7 +767,7 @@ and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/v
   concurrent 128k requests actually run. Same caveat the upstream engine carries
   ([`vllm_openai_xpu/README.md`](../vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*).
 - `healthcheck.start_period` is still `7200s`, which was raised for the gemma-4
-  experiment's ~52 GB download-and-quantise first boot. gpt-oss-20b only needs
+  experiment's ~52 GB download-and-quantize first boot. gpt-oss-20b only needs
   the ~1800s that covered its silent XPU cold start.
 
 **Closed:**

@@ -237,7 +237,7 @@ Expected in the container log:
 | gpt-oss-20b | `Model loading took 12.87 GiB`, `GPU KV cache size: 338,928 tokens … 2.59x` |
 | gemma-4 | `Model loading took 16.93 GiB`, `GPU KV cache size: 152,592 tokens … 1.16x` |
 
-For gemma-4 the log should also show the full quantisation chain, which confirms
+For gemma-4 the log should also show the full quantization chain, which confirms
 the int4 kernels actually engaged rather than silently falling back:
 
 ```
@@ -328,7 +328,7 @@ keeps sending gpt-oss-sized cold prompts to gemma-4 gets multi-minute stalls tha
 look like a gateway fault rather than a deliberate model change.
 
 A swap therefore means updating the consumer's model mapping. That is the point —
-it makes the change visible where the behaviour actually differs.
+it makes the change visible where the behavior actually differs.
 
 `smoke.sh` prints the id→checkpoint mapping on every run, and warns if
 `/v1/models` ever returns a duplicate id.

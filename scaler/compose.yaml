@@ -36,7 +36,7 @@ services:
       SYCL_CACHE_PERSISTENT: "1"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"
       no_proxy: "localhost,127.0.0.1"
-      # Online-quantisation knobs — inert for MXFP4 gpt-oss-20b. ./README.md §7
+      # Online-quantization knobs — inert for MXFP4 gpt-oss-20b. ./README.md §7
       # (the Q40 lib path is image-specific; verified present on this pin)
       VLLM_QUANTIZE_Q40_LIB: "/opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so"
       VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
@@ -48,7 +48,7 @@ services:
     # !! --enforce-eager is MANDATORY, not a safe default: compiled mode boots
     # fine but silently returns EMPTY content+reasoning. Do not remove it
     # without re-verifying correctness. ./README.md §4
-    # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
+    # gpt-oss-20b is MXFP4 (pre-quantized) — do NOT pass --quantization.
     # --kv-cache-memory-bytes OVERRIDES --gpu-memory-utilization (which is kept
     # only as the fallback if the byte value is removed). The value is absolute
     # and image-specific — re-derive it on an image bump. ./README.md §3

@@ -11,7 +11,7 @@ scripts (`watt.sh`, the troubleshooting `/proc` reads) are Linux-specific.
 Three interchangeable engine containers ship here; *Choosing and running an
 engine* below covers which to pick and where each one's own guide lives. This
 is the **how-to** for running and operating the stack. The *why* behind the
-config (VRAM sizing, the util decision, quantisation choices) is in
+config (VRAM sizing, the util decision, quantization choices) is in
 [DEVELOPER.md](DEVELOPER.md); measurements and the record of what has already
 been tried and rejected on the scaler engine are in
 [scaler/README.md](scaler/README.md); a configuration overview is
@@ -102,7 +102,7 @@ the engine or the setup around it.
 `scaler/` is Intel's fork, tuned for Arc B-series. On this hardware it is the
 faster of the two gpt-oss engines — `0.26.0-b2` measures **85.6 tok/s**
 single-stream on `./bench.sh 400` at ~72 ms TTFT, the best figure recorded here —
-and its image unlocks quantised-MoE paths the stock one lacks. It has
+and its image unlocks quantized-MoE paths the stock one lacks. It has
 engine-specific rules that matter before you run it in anger (**do not use
 `:latest`**, why it must stay `--enforce-eager`, and how to re-derive its KV-pool
 byte value); all of them, with the measurement log, are in
@@ -111,7 +111,7 @@ byte value); all of them, with the measurement log, are in
 `vllm_openai_xpu/` runs upstream's own image and is what's live today. It is
 several vLLM minors newer than the others and the only engine here whose kernels
 load gemma-4. Its guide covers both models it's validated for, and the quadratic
-prefill behaviour that gemma-4 brings with it —
+prefill behavior that gemma-4 brings with it —
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md).
 
 **Benchmark before adopting any of them.** The win has to be measured on your own
@@ -192,7 +192,7 @@ Ctrl-C prints min/avg/max for the run — handy running alongside `bench.sh`. Th
 `xe` driver exposes only cumulative energy (µJ), so the script derives watts from
 the delta between samples.
 
-**Live utilisation/VRAM — `nvtop`** (v3.0.x or newer) is the working TUI monitor
+**Live utilization/VRAM — `nvtop`** (v3.0.x or newer) is the working TUI monitor
 for the `xe` B60. `intel_gpu_top` does **not** work here (it's i915-only);
 Intel's `xpu-smi` is an alternative if you install it.
 
@@ -206,11 +206,11 @@ suggest — verified across every engine here, on both older and current Intel
 images. Any consumer parsing for `reasoning_content`
 sees empty strings while thinking tokens are silently consumed.
 
-Per-family behaviour:
+Per-family behavior:
 
 - **gpt-oss** — always reasoning, no off switch. Effort is a request field
   (`reasoning_effort: low|medium|high`, default `medium`) — see
-  [DEVELOPER.md](DEVELOPER.md) for its latency behaviour. Reasoning tokens count
+  [DEVELOPER.md](DEVELOPER.md) for its latency behavior. Reasoning tokens count
   against `--max-model-len`.
 - **Qwen3** — hybrid; thinking on by default, `/no_think` in the user message
   disables it.
@@ -324,7 +324,7 @@ restarts. It renders `message.reasoning` as a collapsible panel out of the box.
 ## Troubleshooting: "is it stuck or working?"
 
 The first run on a new HF cache has a long silent phase (no logs) while
-oneAPI/SYCL initialises. From the host:
+oneAPI/SYCL initializes. From the host:
 
 - `cat /proc/<pid>/status` — `nonvoluntary_ctxt_switches` should be incrementing
 - `cat /proc/<pid>/io` — `read_bytes` growing means weight load has begun

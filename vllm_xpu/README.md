@@ -60,7 +60,7 @@ any (re)start triggers ~30–60 s of torch.compile work; everything after that i
 fast.
 
 **First run on a fresh cache is silent for 10–15 minutes.** No log output at all
-while oneAPI/SYCL initialises, which is why the healthcheck allows a 30-minute
+while oneAPI/SYCL initializes, which is why the healthcheck allows a 30-minute
 start period. It has not hung — the root README's *"is it stuck or working?"*
 section has the `/proc` reads that prove it. Resist restarting; you'd throw away
 the compile work and start the silence over. After the first run,
@@ -73,11 +73,11 @@ daemon does. An explicit `docker compose stop vllm` is what keeps it down.
 
 ## What it serves, and why
 
-`gpt-oss-20b` is a mixture-of-experts model shipping pre-quantised in MXFP4. Two
+`gpt-oss-20b` is a mixture-of-experts model shipping pre-quantized in MXFP4. Two
 things follow from that, and together they're why this model fits so comfortably
 on a 24 GB card:
 
-- **No quantisation step at load.** The weights are already 4-bit, about 13 GB to
+- **No quantization step at load.** The weights are already 4-bit, about 13 GB to
   fetch and 12.87 GiB resident once loaded. Nothing has to be converted in host
   RAM on the way in.
 - **Cheap KV cache.** Its layers alternate between sliding-window and full
@@ -96,7 +96,7 @@ instead of dumping the model's scratch work into the reply.
 ## What it won't do
 
 It won't load gemma-4. That's an engine-version limit, not a memory or
-quantisation problem — this image is built on a vLLM old enough that the
+quantization problem — this image is built on a vLLM old enough that the
 architecture isn't registered in it. If you want gemma-4, use
 [`vllm_openai_xpu/`](../vllm_openai_xpu/README.md), which runs a much newer
 upstream vLLM.
@@ -122,7 +122,7 @@ sizes the weights plus the KV pool, but on this XPU build it does **not** cap
 torch.compile's kernel and workspace buffers, and those keep growing as new
 request shapes get compiled. At `0.86` the card was measured filled to 22.67 of
 22.71 GiB, leaving 40 MiB of headroom, and the result was OOM-on-the-edge
-behaviour and 504s under load. Treat `0.86` as a wall you never walk up to.
+behavior and 504s under load. Treat `0.86` as a wall you never walk up to.
 `0.80` is comfortable now that the displays are driven by the integrated GPU and
 nothing else competes for VRAM; if you're sharing the card with a desktop
 session, come down to `0.75`.
@@ -203,7 +203,7 @@ VLLM_TOOL_CALL_PARSER=hermes
 - **Tool parser → `hermes`.** Qwen3 emits Hermes-style tool calls, not gpt-oss's
   `openai` format. The image also ships `qwen3_xml` and `qwen3_coder`; the latter
   is only for Qwen3-**Coder**.
-- **Utilisation 0.80 → 0.9.** Qwen3-32B-AWQ's weights are ~18 GiB, so 0.80 leaves
+- **Utilization 0.80 → 0.9.** Qwen3-32B-AWQ's weights are ~18 GiB, so 0.80 leaves
   too little for a usable pool. ⚠ **This is over the 0.86 OOM edge described
   above** — it is a tight fit on 22.7 GiB and the reason the context is only
   7,168. Watch real VRAM and size it empirically rather than trusting this
@@ -302,7 +302,7 @@ family, or a client reading `reasoning_content` — the field is **`reasoning`**
 **Silence on first boot.** Covered above. Thirty minutes is budgeted for a reason.
 
 **The card looks idle while the model is clearly working.** Container GPU
-utilisation doesn't show up in the usual host-side monitors. Read the sysfs
+utilization doesn't show up in the usual host-side monitors. Read the sysfs
 frequency nodes instead; the root [README](../README.md) covers this.
 
 ---
