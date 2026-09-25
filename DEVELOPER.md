@@ -41,7 +41,7 @@ see [scaler/README.md](scaler/README.md) and
 
 ## Why 128k context fits
 
-gpt-oss-20b is an MoE with ~13.7 GiB MXFP4 weights (~3.6B active params), natively
+gpt-oss-20b is an MoE with 12.87 GiB of MXFP4 weights (~3.6B active params), natively
 128k (YaRN, `max_position_embeddings=131072`), and the engines now ship the full
 **131072**. What makes it affordable is the attention geometry: gpt-oss alternates
 sliding-window(128) and full-attention layers, so per-request KV is roughly halved
@@ -51,34 +51,9 @@ against a dense model — ~24.8 KiB/token. With the explicit ~8 GiB pool that gi
 The 64k/0.75 profile documented here previously was the pre-2026-07 baseline,
 from when the B60 still drove displays.
 
-## Sizing `--max-model-len`
-
-vLLM does a KV-cache pre-check at startup. If `max-model-len × KV-per-token`
-doesn't fit in the VRAM left after weights + compile artifacts, startup fails
-with an explicit error ("*the model's max seq len … is larger than the maximum
-number of tokens that can be stored in KV cache*").
-
-Methodology: pick an ambitious target, drop to the next round value if the
-pre-check rejects. Don't compute it analytically — compile overhead isn't
-predictable from outside.
-
-Known-good empirical values on the B60:
-
-| Model | Weights (loaded) | Working `--max-model-len` | Notes |
-|-------|------------------|----------------------------|-------|
-| gpt-oss-20b | ~13.7 GiB | **131072** (128k) | At 0.80 util + an explicit KV pin; the value shipped in `vllm_xpu/compose.yaml` |
-| Qwen3-32B-AWQ | 18.14 GiB | **7168** | 12k and 10k both failed the pre-check |
-
-*Weights here are the loaded figure vLLM reports at startup (GiB); the ≈GB
-on-disk cache sizes in README/INTEL_ARC_B60 are the same weights in GB units
-(18.14 GiB ≈ 19 GB).*
-
-**To go bigger later:** raise `--max-model-len` AND re-measure real VRAM
-headroom. Drop to 32k/16k if a future swap's pre-check rejects at startup.
-
 ---
 
-## Quantisation on the B60
+## Quantization on the B60
 
 - **MXFP4 is the only viable format for gpt-oss.** Its weights are natively
   MXFP4; loading as BF16 inflates to ~40 GB and won't fit 24 GB. Intel's
@@ -89,6 +64,10 @@ headroom. Drop to 32k/16k if a future swap's pre-check rejects at startup.
   blocked by an upstream vLLM XPU bug (`RMSNormQuantFusionPass` NameError). Each
   Qwen swap-back also means switching `--reasoning-parser` to `qwen3` (hybrid
   thinking; `/no_think` disables) and lowering `--max-model-len`.
+- **gemma-4: offline int4, group-32 only.** It runs on the `vllm_openai_xpu`
+  engine from a W4A16 compressed-tensors checkpoint. Group-64 builds are
+  rejected at load. Checkpoints and numbers are in
+  [Models that have run on the B60](#models-that-have-run-on-the-b60).
 
 ## Reasoning-effort lever (gpt-oss)
 
@@ -131,107 +110,31 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 
 ## Choosing the inference engine
 
-Three engine images, one at a time (single GPU). Two serve gpt-oss-20b and are
-drop-in for each other — `vllm_xpu/compose.yaml` (stock `intel/vllm`) and
-`scaler/compose.yaml` (Intel's B-series-optimised `llm-scaler-vllm` fork). The
-third, `vllm_openai_xpu/`, runs upstream's own image and serves **gemma-4**;
-swapping to it changes the served model name, so downstream mappings move with
-it. The operator procedure is in the README.
+There are three engines, each in its own folder, and only one runs at a time.
+The top-level [README](README.md) has the table for picking one. The reasons
+behind it:
 
-**Why compare:** measure whether the `llm-scaler` fork decodes gpt-oss-20b
-faster than the stock image. Current standing on this box, same scripts:
-**85.6 tok/s** scaler `0.26.0-b2` vs **83.1** upstream `0.29.0` — the scaler
-leads by ~3%. The old **~60 tok/s** figure in earlier revisions of this file was
-measured on `0.17.0-xpu` and is two engine generations out of date; don't use it
-as a yardstick.
-**The engines no longer share a vLLM base.** They briefly did — both on 0.21.0,
-which the fork reached in `0.21.0-b1` — but the scaler pin moved to the 0.26.0
-line on 2026-09-02 (`0.26.0-b1`, then `-b2` on 2026-09-10), taking the fork to a
-vLLM 0.26.0 base. A measured difference is again a mix of the fork's
-Arc-specific work *and* a five-minor-version engine gap, so attribute any win
-carefully.
+- **Why three.** `vllm_xpu/` (stock `intel/vllm`) is the conservative baseline
+  for gpt-oss-20b. `scaler/` (Intel's B-series fork, `llm-scaler-vllm`) is the
+  fastest for gpt-oss-20b, at 85.6 tok/s against 83.1 on upstream.
+  `vllm_openai_xpu/` (upstream's own XPU image) is the only engine that loads
+  gemma-4. Switching to it changes the served model name, so gateway mappings
+  have to change with it.
+- **Why a folder per engine, not a compose profile.** Weights plus KV pool take
+  17–21 GiB of the ~22.7 GiB card, so no two engines fit at once. Because every
+  `up` has to name a folder, you can't start two by accident, and it's always
+  explicit which engine is live.
+- **The scaler's lead isn't the fork's work alone.** The fork is built on
+  vLLM 0.26.0 and the stock image is on 0.21.0. A measured difference mixes
+  Intel's Arc-specific changes with five minor versions of engine changes.
+- **`--enforce-eager` is mandatory on the scaler.** In compiled mode the engine
+  boots, then returns empty `content` and `reasoning` for gpt-oss-20b. Nothing
+  crashes, so the logs give no warning. This was tested on 2026-07-03. Re-testing
+  it on a newer base is an experiment that needs a correctness check, not a
+  default you can simply flip.
 
-**Why a folder per engine, not a compose profile:** one GPU (~22.7 GiB), and a
-model's weights plus its KV pool take 17–21 GiB, so **no two of the three
-engines can coexist**. A separate folder per engine means every `up` must target
-an engine's folder (cd into it, or `-f` its `compose.yaml`), so you can't start
-two by accident and "which engine is prod" is always explicit.
-
-**Image:** pinned to `intel/llm-scaler-vllm:0.26.0-b2` (its docs warn against
-`:latest`) — **boot-tested and validated** on the B60 with gpt-oss-20b at
-128k/0.80 eager on 2026-09-10. It is still an unannounced beta line: `latest`
-has not moved since 2026-08-13 and still resolves, digest for digest, to the
-`0.21.0-b3.1`-era image. `Releases.md` on `main` does now name `0.26.0-b2`, but
-the copy inside the b2 git tag still says `b1` — a tag's own release list is
-always one behind. The running engine reports vLLM
-`0.26.1.dev0+g568afb3a1.d20260907` on `GET /version` — the quickest way to
-confirm which engine owns `:8000` without docker, since the stock image reports
-`0.21.0`. Note that b1 and b2 share the fork commit `g568afb3a1` and differ only
-in that trailing build date, so use `docker inspect -f '{{.Config.Image}}'
-vllm-scaler` to tell the two *builds* apart.
-
-**This line reversed the throughput regression and is the fastest measured on the
-B60** — **85.6 tok/s** on `./bench.sh 400` at ~72 ms TTFT, +21.2% over
-`0.21.0-b3` and +5.9% over `0.14.0-b8.3.2`, the previous best. `smoke.sh` is ALL
-PASS, so the inherited parser flag names survived the base jump. The
-image-by-image table, the bench-hygiene rules that make those numbers comparable,
-and the KV-pool figures are all in [scaler/README.md](scaler/README.md) §3.
-
-**b1 → b2 is a bug-fix release, and it is measurably a no-op here**: identical
-tok/s, TTFT, KV pool and VRAM budget, `smoke.sh` still ALL PASS. All four of its
-named fixes land in paths gpt-oss-20b does not use — MTP (which this model cannot
-run at all), `sym_int4`, and block-FP8. Take it as cheap insurance and expect no
-change; the reasoning is in [scaler/README.md](scaler/README.md) §2.
-
-**The pool is now sized explicitly, not left as the util remainder.** Adding
-`--kv-cache-memory-bytes 8647520256` on 2026-09-10 claimed the 3.87 GiB that
-`--gpu-memory-utilization 0.80` was stranding: KV 4.33 → **8.05 GiB**, pool
-183,314 → **340,663 tokens**, concurrency at 128k 1.40× → **2.60×**, with decode,
-TTFT and a byte-identical greedy generation all unchanged — capacity is free
-because decode is bandwidth-bound. Three consequences worth carrying: the flag
-**overrides util entirely** (util stays only as the fallback), its byte value is
-**absolute and image-specific** so it must be re-derived on an image bump, and
-the CLI flag is `--kv-cache-memory-bytes` even though the engine's own log advises
-`--kv-cache-memory`. Full measurement and the re-derive procedure:
-[scaler/README.md](scaler/README.md) §3.
-
-The earlier `b3 → 0.26.0-b1` step *was* a vLLM *base* jump, 0.21.0 → 0.26.0. The
-supported-model table is nearly unchanged from `b3`: three rows added
-(`Muse-Glimmer-30B`, `Qwen3.8-27B`, `Qwen3.8-27B-FP8`), none removed or changed,
-none of the three fitting a single B60, and b2 adds nothing further — its whole
-README diff is *removals*. gpt-oss-20b/120b stay in the MXFP4 column, so support
-is retained; **no release in this line touches gpt-oss**, so any change in
-gpt-oss-20b behaviour comes from the newer base, not the fork's own commits.
-
-Two version-coupled settings in `scaler/compose.yaml` were re-checked against
-both 0.26.0 images on 2026-09-10 (method in [scaler/README.md](scaler/README.md)
-§7): `VLLM_QUANTIZE_Q40_LIB`'s `.so` path is **correct and unchanged**, closing a
-long-standing unknown, while `VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT` turned out to be
-**dead** — absent from both images and deleted from upstream's README at b2 — and
-has been removed from the file. Clearing `llm_vllm-scaler-cache` on an image bump
-is **not** needed on this engine: eager compiles nothing, so the volume holds
-16 KB of hash-guarded metadata. The remaining inherited risk, the
-`--reasoning-parser` / `--tool-call-parser` flag names, stays **cleared** by the
-passing `smoke.sh` above.
-
-**`--enforce-eager` is mandatory, not a safe default:** the config boots with
-`--enforce-eager`, which disables torch.compile — removing the uncapped Inductor
-buffer growth that constrains util on the stock image, so a higher util would be
-safe here (0.80 is kept to match the base vLLM engine). Eager is normally slower
-than compiled, **but compiled mode was tested on 2026-07-03 and rejected**:
-without `--enforce-eager` the engine boots and compiles fine, then returns empty
-`content` *and* `reasoning` for gpt-oss-20b — a silent correctness failure with no
-crash in the logs. So the eager figure is the fork's real number, not an
-under-statement. The base is five minors newer than the image that failed, so the
-verdict *might* have changed; treat re-testing it as a deliberate,
-correctness-verified experiment, not a default to flip. The fork's experimental
-XPU graph support (added in `0.21.0-b1`) has its own switch,
-`VLLM_XPU_ENABLE_XPU_GRAPH` — **tested 2026-09-03 and it is a no-op while
-`--enforce-eager` is set**, so the boot-log warning recommending it is safe to
-ignore. Measurements in [scaler/README.md](scaler/README.md) §4.
-gpt-oss-20b is MXFP4 (pre-quantised) — do **not** pass `--quantization`. The fork
-inherits upstream's parser flag names; if it renamed them the server fails fast at
-startup with a clear arg error.
+Image pins, the image-by-image throughput table, release notes and the
+env-var re-checks are all in [scaler/README.md](scaler/README.md).
 
 ---
 
@@ -240,12 +143,47 @@ startup with a clear arg error.
 Context for future hardware or model swaps:
 
 - **B70 vs B60** — the Arc Pro B70 (32 GB) gives roughly 1.3× decode / 1.85×
-  prefill plus context headroom over the B60, but does **not** unlock Gemma 4
-  (that's software-gated, not a VRAM limit).
+  prefill plus context headroom over the B60. It isn't needed for gemma-4,
+  which already runs on the B60 (table below).
 - **Multi-GPU** — on a consumer board a second card typically only gets a
   chipset x4 link, so don't tensor-/pipeline-parallel across cards; run each card
   as an independent engine instead.
-- **Model freshness** — gpt-oss-20b's knowledge cutoff is mid-2024. Fresher fast
-  MoEs (e.g. Qwen3.5/3.6-35B-A3B AWQ ≈ 24 GB) don't fit the B60's ~22.7 GiB
-  usable, so freshness is better addressed with RAG than with a model swap on
-  this card.
+
+### Models that have run on the B60
+
+A model is listed only once it has actually booted and served requests on this
+card. Being in an engine's supported-model table, or fitting on paper, doesn't
+count. The numbers are the ones measured at the time.
+
+| Model | Checkpoint | Quantization | Weights loaded | Engine | Context booted | Decode |
+|---|---|---|---|---|---|---|
+| gpt-oss-20b | `openai/gpt-oss-20b` | MXFP4 (native) | 12.87 GiB | •&nbsp;`vllm_xpu`<br>•&nbsp;`scaler`<br>•&nbsp;`vllm_openai_xpu` | 131,072 | • `scaler`: 85.6 tok/s ¹<br>• `vllm_openai_xpu`: 83.1 tok/s ¹ |
+| gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | •&nbsp;`vllm_openai_xpu` | 45,056 | 56.5 tok/s |
+| gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` ² | int4 W4A16, group-32 | 16.93 GiB | •&nbsp;`vllm_openai_xpu` | 131,072 | 56.2 tok/s |
+| Qwen3-32B-AWQ | `Qwen/Qwen3-32B-AWQ` | AWQ int4 | 18.14 GiB | •&nbsp;`vllm_xpu` ³ | 7,168 | not recorded |
+
+¹ `bench.sh` counts streamed chunks, so both gpt-oss figures slightly
+under-state the true token rate. The gemma-4 figures are true tokens from the
+usage chunk.
+² This repo stopped being downloadable (HTTP 401) on 2026-09-21. It still
+works from a local cache, but a fresh install should use the `adeepv` row.
+³ Measured on the predecessor image, `intel/vllm:0.17.0-xpu`, and not re-run
+since. Treat it as historical until it's booted on the current image.
+
+What the table says about quantization on this card:
+
+- **gpt-oss has one format, MXFP4**, and it's native. It ships pre-quantized,
+  so every engine here loads it as shipped. Never pass `--quantization`.
+- **gemma-4 needs an offline int4 checkpoint with group size 32** (channelwise
+  would also pass), in compressed-tensors format. The XPU expert kernel rejects
+  the more common group-64 builds at load. Check
+  `quantization_config.config_groups.*.weights.group_size` before downloading
+  any MoE checkpoint. Both checkpoints above are built from Google's own QAT
+  weights: `adeepv` repacks them and `reinforce20001` re-quantizes them.
+- **Qwen3 dense ran as AWQ.** The official FP8 weights hit an XPU bug (see
+  *Quantization on the B60*).
+- **Fresher models are a swap, not only a RAG problem.** gpt-oss-20b's
+  knowledge cutoff is mid-2024. gemma-4-26B-A4B is a 2026 model that fits in
+  about 16 GiB with room for 131,072 tokens of context, so RAG is no longer the
+  only way to get fresher knowledge. Some fresher MoEs still don't fit — e.g.
+  Qwen3.5/3.6-35B-A3B AWQ is ≈ 24 GB against ~22.7 GiB usable.
