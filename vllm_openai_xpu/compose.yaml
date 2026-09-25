@@ -14,7 +14,7 @@ services:
   vllm-openai-xpu:
     # Upstream's own XPU image, separate Docker Hub repo from the CUDA one.
     # Here `latest` DOES track newest stable (unlike the Intel images).
-    image: vllm/vllm-openai-xpu:v0.29.0
+    image: vllm/vllm-openai-xpu:v0.30.0
     container_name: vllm-openai-xpu
     restart: "no"            # evaluation engine — do not let it fight for the GPU
     # Whole /dev/dri + the by-path bind below are BOTH required, even at

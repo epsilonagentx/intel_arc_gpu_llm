@@ -115,7 +115,7 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
   `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate.
   The `qwen3` and `openai_gptoss` reasoning parsers are present as before.
   > **No longer unproven.** Gemma-4-26B-A4B runs on the B60 on the *upstream*
-  > engine (`vllm_openai_xpu/`, v0.29.0) from an offline int4 **group-32**
+  > engine (`vllm_openai_xpu/`, v0.29.0 onward) from an offline int4 **group-32**
   > checkpoint, at 131,072 context. The XPU expert kernel accepts only group-32
   > or channelwise int4 — that narrowness, not a kernel gap, was the real
   > constraint. See [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md),

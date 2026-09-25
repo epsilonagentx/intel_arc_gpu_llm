@@ -42,7 +42,7 @@ bites. Pick one and start there:
 |---|---|---|---|
 | [`vllm_xpu/`](vllm_xpu/README.md) | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
 | [`scaler/`](scaler/README.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s) |
-| [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.29.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
+| [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.30.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
 
 **One GPU → exactly one engine at a time.** Each needs 13–17 GiB of weights plus
 its KV pool; together they OOM. Every command targets a folder, so you can't

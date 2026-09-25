@@ -22,7 +22,7 @@ prediction or an extrapolation, it says so.
 
 | | |
 |---|---|
-| Image | `vllm/vllm-openai-xpu:v0.29.0` |
+| Image | `vllm/vllm-openai-xpu:v0.30.0` |
 | Model runner | V2 (upstream default from 0.29.0) |
 | Model served | `gemma-4-26B-A4B-it`, offline int4 group-32 |
 | Context | 131,072 |
@@ -664,6 +664,53 @@ gpt-oss here. Upstream's advantages are non-performance: several vLLM minors
 newer, half the image size, mainline rather than an undocumented beta, a
 trustworthy `latest`, and `xpu-smi` in the image — plus it is **the only engine
 here that runs gemma-4**, which is the actual reason it's serving.
+
+### 0.29.0 → 0.30.0 — a like-for-like swap
+
+Measured 2026-09-22 on gemma-4 (int4 group-32, 45,056 context, 5.25 GiB pinned
+pool, compiled), same script against both images, true token counts from the
+streamed usage chunk:
+
+| | 0.29.0 | 0.30.0 |
+|---|---|---|
+| decode, 512 tok, thinking off | 56.38 tok/s | 56.46 tok/s |
+| TTFT, short prompt | 40 ms | 40 ms |
+| cold prefill, 8,161 tok | 19.14 s | 19.14 s |
+| cold prefill, 16,301 tok | 74.11 s | 74.33 s |
+| 4 concurrent, aggregate | 181.8 tok/s | 182.1 tok/s |
+| KV pool | 117,681 tok (2.61×) | 117,681 tok (2.61×) |
+| weights on device | 15.87 GiB | 15.76 GiB |
+| engine init | 65 s | 109 s cold cache |
+| `smoke.sh`, thinking on and off | ALL PASS | ALL PASS |
+
+Nothing moved. The release's XPU work (fused GemmaRMSNorm, SYCL activation ops,
+triton-xpu 3.8.0) doesn't show up in decode, and prefill is still quadratic
+because the backend is still forced to TRITON_ATTN — the boot log prints the same
+"FA4 not available" line. The same `--kv-cache-memory-bytes` value produced the
+same pool, so no `.env` value needs to change.
+
+Two things to know before you read your own numbers after an upgrade:
+
+- **The first concurrent batch after a cache wipe is slow.** It read 165 tok/s
+  once, then 181.6–182.4 on four repeats — Triton compiling the new batch shapes
+  (`jit_monitor` logs it). Warm the engine before measuring.
+- **The 109 s init includes a 33.6 s compile** into the freshly emptied
+  `vllm-openai-cache` volume; later boots reuse it (the next compiled boot:
+  72 s, 2.6 s of it compiling).
+
+**The release's new XPU kernels only run in eager mode, and compiled still
+wins.** Under torch.compile the XPU platform sets op priority to `native`, so
+the fused GemmaRMSNorm and SYCL activation ops are bypassed — the boot log shows
+`custom_ops: ['none']`. `--enforce-eager` switches them on (`custom_ops: ['all']`,
+`vllm_c` first), measured on 0.30.0 with the same pool:
+
+| | compiled | eager + fused kernels |
+|---|---|---|
+| decode | **56.46 tok/s** | 53.25 tok/s (−5.7%) |
+| 4 concurrent, aggregate | **182.1 tok/s** | 176.0 tok/s (−3.3%) |
+| cold prefill, 8,161 tok | 19.14 s | 19.22 s |
+
+Keep `VLLM_EAGER_FLAG=--no-enforce-eager`.
 
 ---
 
