@@ -5,35 +5,77 @@
 #   ./bench.sh                                       # default prompt, 200 tokens
 #   ./bench.sh 400                                   # max_tokens=400
 #   ./bench.sh 400 "Summarize the French Revolution." # custom prompt
+#   THINKING=1 ./bench.sh 1500                       # force reasoning ON
+#   THINKING=0 ./bench.sh 400                        # force reasoning OFF
+#
+# THINKING is tri-state and controls `chat_template_kwargs.enable_thinking`:
+#   auto (default) — send nothing; the server's own default decides
+#   1              — force on   (models whose reasoning is opt-in: gemma-4, Qwen3)
+#   0              — force off  (suppress reasoning even if the server defaults it on)
+# Both directions are per-request overrides and beat the server-side
+# --default-chat-template-kwargs, so `auto` is the only value that reports what
+# the deployed default actually does. No-op for gpt-oss-20b, which always reasons.
+# NOTE: with reasoning on, a low --max-tok is consumed entirely by the reasoning
+# phase, leaving zero content chunks — budget 1500+ to also get an answer.
 set -euo pipefail
 
 MAX_TOK="${1:-200}"
 PROMPT="${2:-Explain in detail how the human immune system identifies and destroys cancer cells.}"
 ENDPOINT="${VLLM_ENDPOINT:-http://localhost:8000}"
-MODEL="${MODEL:-gpt-oss-20b}"
+THINKING="${THINKING:-auto}"
+
+# Default to whatever the engine actually serves, so the script keeps working
+# across a model swap. A hardcoded default would 404 the moment `.env` changes.
+MODEL="${MODEL:-}"
+MODEL_SRC="explicit"
+if [[ -z "$MODEL" ]]; then
+    MODEL=$(curl -s --max-time 10 "$ENDPOINT/v1/models" 2>/dev/null \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null) || true
+    MODEL_SRC="auto-detected"
+fi
+if [[ -z "$MODEL" ]]; then
+    echo "ERROR: no model id readable from $ENDPOINT/v1/models — is the engine up?" >&2
+    echo "       Start it, or pass one explicitly: MODEL=<id> $0" >&2
+    exit 1
+fi
 
 echo "Endpoint: $ENDPOINT"
-echo "Model:    $MODEL"
+echo "Model:    $MODEL ($MODEL_SRC)"
 echo "Prompt:   $PROMPT"
 echo "Max tok:  $MAX_TOK"
+echo "Thinking: $THINKING"
 echo
 
-python3 - "$ENDPOINT" "$MODEL" "$MAX_TOK" "$PROMPT" <<'PY'
+python3 - "$ENDPOINT" "$MODEL" "$MAX_TOK" "$PROMPT" "$THINKING" <<'PY'
 import json, sys, time, urllib.request
 
 endpoint, model, max_tok, prompt = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+thinking = sys.argv[5]          # "auto" | "1" | "0"
+
+payload = {
+    "model": model,
+    "messages": [{"role": "user", "content": prompt}],
+    "max_tokens": max_tok,
+    "stream": True,
+}
+# "auto" deliberately sends no chat_template_kwargs, so the server-side
+# --default-chat-template-kwargs decides. "1"/"0" override it either way.
+if thinking in ("1", "0"):
+    payload["chat_template_kwargs"] = {"enable_thinking": thinking == "1"}
+elif thinking != "auto":
+    print(f"ERROR: THINKING must be auto, 1 or 0 (got {thinking!r})", file=sys.stderr)
+    sys.exit(1)
 
 req = urllib.request.Request(
     f"{endpoint}/v1/chat/completions",
     method="POST",
     headers={"Content-Type": "application/json"},
-    data=json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tok,
-        "stream": True,
-    }).encode(),
+    data=json.dumps(payload).encode(),
 )
+
+def fail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
 
 t0 = time.perf_counter()
 ttft_any = None        # first token of any kind (reasoning or content)
@@ -41,7 +83,24 @@ ttft_content = None    # first delta.content specifically
 chunks_reasoning = 0
 chunks_content = 0
 reasoning_out, content_out = [], []
-with urllib.request.urlopen(req, timeout=300) as r:
+try:
+    stream = urllib.request.urlopen(req, timeout=300)
+except urllib.error.HTTPError as e:
+    detail = e.read().decode(errors="replace")[:300]
+    if e.code == 404:
+        try:
+            with urllib.request.urlopen(f"{endpoint}/v1/models", timeout=10) as r:
+                served = [m["id"] for m in json.load(r).get("data", [])]
+        except Exception:
+            served = []
+        fail(f"HTTP 404: model {model!r} is not served.\n"
+             f"  Served now: {served}\n"
+             f"  Re-run with MODEL=<one of those>, or unset MODEL to auto-detect.")
+    fail(f"HTTP {e.code} from /v1/chat/completions: {detail}")
+except urllib.error.URLError as e:
+    fail(f"Cannot reach {endpoint}: {e.reason}")
+
+with stream as r:
     for raw in r:
         line = raw.decode().strip()
         if not line.startswith("data: "):

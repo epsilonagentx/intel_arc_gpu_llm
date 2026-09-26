@@ -91,7 +91,7 @@ services:
       start_period: 1800s   # first run downloads ~13 GB + loads model
 
 # ============================================================================
-# ALTERNATIVE ENGINE — Intel LLM-Scaler vLLM (Arc Pro B-series optimised fork)
+# ALTERNATIVE ENGINE — Intel LLM-Scaler vLLM (Arc Pro B-series optimized fork)
 # ============================================================================
 # The scaler engine lives in its OWN folder, scaler/compose.yaml, and is a
 # DROP-IN replacement for the `vllm` service above: same model, same published

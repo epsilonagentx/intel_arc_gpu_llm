@@ -1,23 +1,32 @@
 # Intel Arc B60 LLM stack — configuration overview
 
 A quick-reference snapshot of how the stack is configured. The how-to and the
-why live in the two role docs:
+why live elsewhere:
 
-- **[README.md](README.md)** — devops / operator: how to run, swap, monitor, troubleshoot.
-- **[DEVELOPER.md](DEVELOPER.md)** — developer: why the config is what it is.
+- **[README.md](README.md)** — how to run, swap, monitor and troubleshoot.
+- **[DEVELOPER.md](DEVELOPER.md)** — why the config is what it is.
 
-> The Compose project name is pinned to `llm` (`name: llm` in both engine
-> compose files), so the cache volumes stay `llm_*` regardless of the
-> folder the repo is checked out into — and so both engines share one weights cache.
+> The Compose project name is pinned to `llm` (`name: llm` in **all three**
+> engine compose files), so the cache volumes stay `llm_*` regardless of the
+> folder the repo is checked out into — and so all three engines share one
+> weights cache. Never pass `--remove-orphans`: in one shared project it deletes
+> the other engines.
 
 ---
 
 ## Current config
 
-Source of truth is the engine compose files — `vllm_xpu/compose.yaml` (stock
-`intel/vllm`, the default; values overridable via `vllm_xpu/.env`, see
-`vllm_xpu/.env.example`) and `scaler/compose.yaml` (the alternative
-`llm-scaler` engine). This table snapshots the default `vllm` engine for quick orientation.
+Each engine's compose file is the source of truth, and each folder's README
+explains that engine:
+
+| folder | image | its README |
+|---|---|---|
+| `vllm_xpu/` | stock `intel/vllm` | [vllm_xpu/README.md](vllm_xpu/README.md) |
+| `scaler/` | Intel's `llm-scaler` fork | [scaler/README.md](scaler/README.md) |
+| `vllm_openai_xpu/` | upstream's XPU image — **currently live** | [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md) |
+
+⚠ The table below describes the **stock `vllm_xpu/` engine only**, as a quick
+orientation snapshot. It is not what is running today.
 
 | | |
 |---|---|
@@ -27,32 +36,26 @@ Source of truth is the engine compose files — `vllm_xpu/compose.yaml` (stock
 | Devices | whole `/dev/dri` + `/dev/dri/by-path` bind-mount (oneCCL enumeration) |
 | Model | `openai/gpt-oss-20b`, served as **`gpt-oss-20b`** |
 | Endpoint | `http://localhost:8000/v1` (LAN-exposed on port 8000) |
-| Context | `--max-model-len 65536` (64k) |
-| VRAM | `--gpu-memory-utilization 0.75` |
+| Context | `--max-model-len 131072` (128k) |
+| VRAM | `--gpu-memory-utilization 0.80` (this engine does **not** pin the KV pool; `scaler/` and `vllm_openai_xpu/` do) |
 | Reasoning | `--reasoning-parser openai_gptoss` → trace in `message.reasoning` |
 | Tools | `--enable-auto-tool-choice --tool-call-parser openai` (OpenAI format, **on**) |
 
 ## Cached models
 
-Swapping the served model is a `vllm_xpu/.env` edit, with no re-download for a
-model that's already cached — see the README's swap procedure. Sizes below are on-disk
-footprint; loaded-weight GiB and context caps are in [DEVELOPER.md](DEVELOPER.md).
+Already in the shared weights cache, so swapping to either needs no download.
+Sizes are on-disk footprint:
 
-- `openai/gpt-oss-20b` (~13 GB on disk) — the configured/served model
-- `Qwen/Qwen3-32B-AWQ` (~19 GB on disk) — alternate (parser `qwen3`; capped at ~7168 ctx on the B60, see [DEVELOPER.md](DEVELOPER.md))
+- `openai/gpt-oss-20b` — ~13 GB
+- `Qwen/Qwen3-32B-AWQ` — ~19 GB
+
+How to point an engine at a different model differs per engine, so it is
+documented in each folder's README — for these two, in
+[vllm_xpu/README.md](vllm_xpu/README.md), which also has a worked example.
 
 ## Clients
 
-The endpoint is OpenAI-compatible (`/v1`), so any OpenAI-style client works — a
-consumer is generally either an AI gateway in front of it or a containerized
-tool/UI that talks to it directly:
-
-- **AI gateways / proxies** (e.g. LiteLLM, Bifrost — any gateway works) — front
-  the endpoint at `http://<host>:8000/v1` with the served model name to add
-  routing, key management, or multiple backends (`api_key` can be any value;
-  vLLM needs no auth).
-- **Any containerized tool / UI** that speaks the OpenAI API — such as Open
-  WebUI, a self-hosted chat UI provided as an optional separate Compose project
-  (`open_web_ui/compose.yaml`).
-
-See the README's *Clients* and *Running Open WebUI* sections for details.
+The endpoint is OpenAI-compatible at `http://<host>:8000/v1` and needs no auth,
+so any OpenAI-style client works — typically an AI gateway in front of it, or a
+tool that speaks the API directly. The root [README](README.md) covers both,
+along with the optional Open WebUI project.

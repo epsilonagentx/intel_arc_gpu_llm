@@ -11,8 +11,8 @@
 
   ## Getting started
 
-  - For anything non-trivial (bugs, new features), **open an issue first** so we can
-    align before you invest time.
+  - For anything non-trivial (bugs, new features), **open an issue first** so the
+    approach is agreed before you invest time.
   - For small fixes (typos, doc tweaks), a direct pull request is fine.
 
   ## Branching & pull requests
@@ -37,7 +37,7 @@
   ## Style
 
   - Match the style of the file you're editing.
-  - Docs are split by audience — put content where it belongs:
+  - Each doc has one job — put content where it belongs:
     `README.md` (operator how-to), `DEVELOPER.md` (the *why*),
     `INTEL_ARC_B60.md` (current state).
   - Shell scripts: keep them dependency-light.
