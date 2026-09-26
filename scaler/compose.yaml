@@ -1,105 +1,57 @@
 # ALTERNATIVE INFERENCE ENGINE — Intel LLM-Scaler vLLM (Arc Pro B-series fork).
 #
-# This is a DROP-IN replacement for the base `vllm` service in vllm_xpu/compose.yaml:
-# same model (gpt-oss-20b), same published port (:8000), so any gateway/UI
-# fronting :8000 (LiteLLM / Bifrost / Open WebUI) needs NO change when you swap.
-# Run EITHER this OR vllm_xpu/compose.yaml — never both (see the single-GPU note).
+# Drop-in replacement for the `vllm` service in vllm_xpu/compose.yaml: same
+# model, same port, so anything fronting :8000 needs no change when you swap.
 #
-# WHY A SEPARATE FOLDER (not a profile): both engines are prod candidates you run
-# one at a time to compare on the real workload. Keeping each in its own folder
-# makes "which engine is prod right now" explicit — every `up` must target an
-# engine's folder (cd into it, or -f its compose.yaml from the repo root), so
-# you can't start both by accident.
-#
-# name: llm  <-- SAME project as vllm_xpu/compose.yaml ON PURPOSE, so this reuses
-# that project's `llm_hf-cache` volume: the ~13 GB gpt-oss-20b weights are shared,
-# NOT re-downloaded. (The compile cache is separate — kernels are image-specific.)
-name: llm
-
-# ============================================================================
-# !! SINGLE GPU (~22.7 GiB usable). gpt-oss-20b needs ~17 GiB, so this service
-#    and the base `vllm` service CANNOT run together (~31 GiB = OOM).
-#
-#   Swap FROM base vLLM TO the scaler engine (from the repo root; prod is
-#   offline during the swap):
-#     docker compose -f vllm_xpu/compose.yaml down       # stop base vLLM
-#     docker compose -f scaler/compose.yaml up -d        # scaler on :8000
-#     # first boot = a SILENT 10-15 min XPU cold start (no logs) — wait it out
-#   Swap back to base vLLM:
-#     docker compose -f scaler/compose.yaml down
-#     docker compose -f vllm_xpu/compose.yaml up -d
-#   Logs:  docker compose -f scaler/compose.yaml logs -f
-#
-# STATUS (2026-07-03): eager validated — clean boot, correctness passes, ~80 tok/s
-# single-stream. COMPILED MODE TESTED & REJECTED: dropping --enforce-eager makes
-# the engine emit EMPTY content+reasoning for gpt-oss-20b (see BOOT MODE note),
-# so eager is MANDATORY here, not just a safe default.
-# 2026-07-08: max-model-len 65536 -> 131072 (128k) and util 0.75 -> 0.80, to
-# mirror the base engine's new long-context profile (validated there: 128k fits
-# with a 221k-token pool at 0.80). Boot-tested on the scaler same day: clean
-# boot + correct serving at 128k/0.80. The exact boot-log concurrency figure
-# ("Maximum concurrency for 131,072 tokens per request", want >= 1.0x) was not
-# captured, so read it off the next boot for the record — this fork's OLDER
-# vLLM base may size the KV pool differently than the stock 0.21.0 V1 engine.
-# Eager removes the compile-buffer OOM risk, so 0.80 is comfortable.
-# ============================================================================
+# !! SINGLE GPU — run EITHER this OR vllm_xpu/compose.yaml, never both.
+# Swap procedure and verification:  ../README.md
+# Rationale, measurements, tested-and-rejected flags:  ./README.md
+name: llm   # SAME project as vllm_xpu ON PURPOSE — shares the hf-cache volume
 
 services:
   vllm-scaler:
-    # Pin an exact beta — llm-scaler docs say do NOT use :latest. b8.3.2 (2026-06-26)
-    # is the newest in the b8.3.x line and what `latest` points to; b8.3.2 vs the
-    # prior b8.3.1 is only a Qwen3.5/3.6-27B accuracy fix (no gpt-oss-20b impact),
-    # but pinning the current maintainer build is the right base for a first bench.
-    image: intel/llm-scaler-vllm:0.14.0-b8.3.2
+    # Exact pin — upstream says do NOT use :latest, and here `latest` still
+    # resolves to a much older image. See ./README.md §2.
+    image: intel/llm-scaler-vllm:0.26.0-b2
     container_name: vllm-scaler
     restart: unless-stopped
-    # Narrow device mapping per llm-scaler docs (this fork is on an older vLLM
-    # base that booted with just these nodes). If boot dies on oneCCL
-    # ze_fd_manager / by-path enumeration (as the 0.21.0 base image does), switch
-    # to the whole-/dev/dri + `/dev/dri/by-path:ro` volume combo from
-    # vllm_xpu/compose.yaml.
+    # Whole /dev/dri + the by-path bind below are BOTH required (oneCCL). ./README.md §5
     devices:
-      - /dev/dri/renderD128:/dev/dri/renderD128
-      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri:/dev/dri
     group_add:
       - "992"   # host 'render' GID
       - "44"    # host 'video' GID
     ipc: host
-    shm_size: "32g"          # llm-scaler docs recommend 32g
+    shm_size: "32g"          # per llm-scaler docs
     volumes:
-      - hf-cache:/root/.cache/huggingface      # SHARED with base vLLM — reuse cached gpt-oss-20b weights, NO re-download
-      - vllm-scaler-cache:/root/.cache/vllm    # SEPARATE compile cache (kernels are image-version-specific)
+      - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration
+      - hf-cache:/root/.cache/huggingface      # shared with vllm_xpu — weights not re-downloaded
+      # Compile cache. Under --enforce-eager nothing is compiled, so this only
+      # ever holds hash-guarded model metadata — no need to clear on an image
+      # bump. Measured: ./README.md §6
+      - vllm-scaler-cache:/root/.cache/vllm
     environment:
       HF_HOME: /root/.cache/huggingface
       ZES_ENABLE_SYSMAN: "1"
       SYCL_CACHE_PERSISTENT: "1"
-      VLLM_WORKER_MULTIPROC_METHOD: "spawn"     # per llm-scaler docs
+      VLLM_WORKER_MULTIPROC_METHOD: "spawn"
       no_proxy: "localhost,127.0.0.1"
+      # Online-quantization knobs — inert for MXFP4 gpt-oss-20b. ./README.md §7
+      # (the Q40 lib path is image-specific; verified present on this pin)
+      VLLM_QUANTIZE_Q40_LIB: "/opt/venv/lib/python3.12/site-packages/vllm_int4_for_multi_arc.so"
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+      HF_TOKEN: "${HF_TOKEN:-}"        # empty = anonymous; no secret in this file
     ports:
-      - "8000:8000"          # SAME port as base vLLM (only one runs at a time) so downstream is unchanged
-    # The llm-scaler image's default entrypoint drops to a shell, so invoke
-    # `vllm serve` explicitly via bash -lc (single-element list = one argv string).
-    #
-    # BOOT MODE — EAGER, and it MUST stay eager for gpt-oss-20b on this fork.
-    # TESTED 2026-07-03: dropping --enforce-eager (torch.compile ON) boots and
-    # compiles fine (~80 s) but then generates EMPTY output — completion_tokens
-    # increment yet BOTH `content` and `reasoning` come back null/blank (silent
-    # correctness failure, no crash/NaN in logs). Inductor's compiled graph is
-    # broken for this MXFP4 MoE on XPU here; the fork's own custom kernels only
-    # produce valid output in eager. So keep --enforce-eager: it disables
-    # torch.compile (no compile-buffer growth, so util is NOT constrained by
-    # Inductor buffers here — 0.85 would be safe; we use 0.80 to match the base
-    # vLLM engine, raised from 0.75 on 2026-07-08 once the B60 stopped driving
-    # displays) and is the ONLY mode that generates real text. Measured ~80 tok/s
-    # single-stream = the scaler's real number (NOT an under-statement — compiled
-    # is not an option).
-    #
-    # gpt-oss-20b is MXFP4 (pre-quantised) — do NOT pass --quantization.
-    # The --reasoning-parser/--tool-call-parser flag names are inherited from
-    # upstream vLLM; if this fork renamed them the server fails fast at startup
-    # with a clear arg error — adjust then. Verify the reasoning channel AND
-    # tool-calling actually work here before trusting this engine in prod.
+      - "8000:8000"          # same port as the other engines (only one runs at a time)
+    # Default entrypoint drops to a shell, so invoke `vllm serve` explicitly.
     entrypoint: ["/bin/bash", "-lc"]
+    # !! --enforce-eager is MANDATORY, not a safe default: compiled mode boots
+    # fine but silently returns EMPTY content+reasoning. Do not remove it
+    # without re-verifying correctness. ./README.md §4
+    # gpt-oss-20b is MXFP4 (pre-quantized) — do NOT pass --quantization.
+    # --kv-cache-memory-bytes OVERRIDES --gpu-memory-utilization (which is kept
+    # only as the fallback if the byte value is removed). The value is absolute
+    # and image-specific — re-derive it on an image bump. ./README.md §3
     command:
       - |
         vllm serve openai/gpt-oss-20b \
@@ -107,6 +59,7 @@ services:
           --port 8000 \
           --max-model-len 131072 \
           --gpu-memory-utilization 0.80 \
+          --kv-cache-memory-bytes 8647520256 \
           --enforce-eager \
           --reasoning-parser openai_gptoss \
           --enable-auto-tool-choice \
@@ -117,7 +70,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 60
-      start_period: 1800s
+      start_period: 7200s    # covers a silent XPU cold start; 1800s suffices for gpt-oss
 
 volumes:
   hf-cache:              # shared with vllm_xpu/compose.yaml (project `llm`)
