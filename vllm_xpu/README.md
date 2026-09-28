@@ -30,10 +30,9 @@ with `restart: unless-stopped`, so it comes back on its own after a reboot.
 
 ```bash
 cd vllm_xpu
-docker compose up -d vllm                    # start
+docker compose up -d vllm                    # start, or apply a config edit
 docker compose logs -f vllm                  # follow startup
 docker compose stop vllm                     # stop
-docker compose up -d --force-recreate vllm   # apply a config edit
 ```
 
 Or from the repo root with `-f vllm_xpu/compose.yaml` in place of the `cd`. Either
@@ -136,7 +135,7 @@ submit, not a speed setting. Decode rate doesn't change with it.
 
 ## Swapping the served model
 
-Two steps: set the model-specific values in `.env`, then force-recreate. The
+Two steps: set the model-specific values in `.env`, then run `up -d` again. The
 compose file is never edited.
 
 **Step 1 — the model-specific variables:**
@@ -150,15 +149,15 @@ compose file is never edited.
 | `VLLM_MAX_MODEL_LEN` | Context window — must fit VRAM after weights and compile buffers |
 | `VLLM_GPU_MEMORY_UTILIZATION` | See the warning above before raising it |
 
-**Step 2 — recreate:**
+**Step 2 — apply:**
 
 ```bash
-docker compose up -d --force-recreate vllm
+docker compose up -d vllm
 ```
 
-`--force-recreate` is not optional. vLLM bakes its CLI arguments into the
-container at creation, so a plain `up -d` finds a running container, leaves it
-alone, and **your `.env` edit appears to do nothing.**
+Compose sees the changed settings and recreates the container by itself.
+`docker compose restart` would not: it restarts the old container with its old
+settings.
 
 **If the model is already cached**, that's the whole procedure — no re-download.
 Compile artifacts in `vllm-cache` are model-specific, so the first request after
@@ -191,7 +190,7 @@ VLLM_REASONING_PARSER=qwen3
 VLLM_TOOL_CALL_PARSER=hermes
 ```
 
-…then force-recreate. What changed, and why each one matters:
+…then `docker compose up -d vllm`. What changed, and why each one matters:
 
 - **Context 131,072 → 7,168.** The empirical B60 cap for this model; 10k and 12k
   both fail vLLM's KV pre-check at startup. Qwen3-32B is **dense**, so unlike
@@ -286,7 +285,9 @@ Unlike the upstream engine, this one runs happily with
 side effect of three engines sharing one project name. Stop the other engine from
 *its* folder; don't take Compose's suggestion to prune orphans.
 
-**`.env` edit had no effect.** Missing `--force-recreate`.
+**`.env` edit had no effect.** Usually `docker compose restart` was used, which
+keeps the old settings; use `up -d`. An `export`ed shell variable also beats
+`.env` until you `unset` it.
 
 **Port 8000 is already taken.** Something else is serving on it. A local
 `llama.cpp` setup is the usual culprit, and if it's under a process supervisor it

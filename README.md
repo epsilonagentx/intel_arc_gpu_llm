@@ -44,7 +44,7 @@ bites. Pick one and start there:
 | [`scaler/`](scaler/README.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s) |
 | [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.30.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
 
-**One GPU → exactly one engine at a time.** Each needs 13–17 GiB of weights plus
+**One GPU → exactly one engine at a time.** Each needs 13–16 GiB of weights plus
 its KV pool; together they OOM. Every command targets a folder, so you can't
 start two by accident. All three share the Compose project name `llm` on purpose
 so they reuse one weights cache — which is also why you must **never pass

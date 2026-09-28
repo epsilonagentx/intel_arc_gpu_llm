@@ -9,7 +9,9 @@ It's configured for **two validated models** — `gemma-4-26B-A4B-it` and
 It is also the only engine in this repo that can load gemma-4, which is why it's
 the one currently serving.
 
-Everything below was measured on an Arc Pro B60 (24 GB). Where a number is a
+Everything below was measured on an Arc Pro B60 (24 GB) unless it says B70. The
+Arc Pro B70 replaced it on 2026-09-26 and runs gemma-4 about 1.3× faster at
+decode, so don't compare B70 numbers with B60 ones directly. Where a number is a
 prediction or an extrapolation, it says so.
 
 > **One GPU, one engine.** Exactly one may run at a time — `docker compose down`
@@ -28,6 +30,7 @@ prediction or an extrapolation, it says so.
 | Context | 131,072 |
 | KV pool | 152,592 tokens = 1.16× concurrency |
 | Reasoning | opt-in per request |
+| Per-request stats | on — `metrics` in chat and completions responses; a stream needs `include_usage` |
 | `smoke.sh` | ALL PASS |
 
 Kept as the cross-engine comparison point, measured for **gpt-oss-20b** on this
@@ -47,6 +50,7 @@ same engine: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928 tokens
 - [Model naming](#model-naming)
 - [`bench.sh` and `smoke.sh`](#benchsh-and-smokesh)
 - [Downstream consumers](#downstream-consumers)
+- [Per-request stats — TTFT and tok/s](#per-request-stats--ttft-and-toks)
 - [gemma-4 in depth](#gemma-4-in-depth) — checkpoint, context, prefill, prefix cache
 - [Performance](#performance)
 - [Why it is configured this way](#why-it-is-configured-this-way)
@@ -60,7 +64,7 @@ same engine: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928 tokens
 
 ```bash
 cd vllm_openai_xpu
-docker compose up -d --force-recreate
+docker compose up -d
 cd ..                                   # the scripts live at the repo root
 ./smoke.sh        # correctness: served, content, reasoning, tool-calling
 ./bench.sh 400    # speed: TTFT and tok/s
@@ -69,11 +73,21 @@ cd ..                                   # the scripts live at the repo root
 Cold boot is ~2.5 min. `/v1/models` starts answering **before** generation is
 ready, so trust `smoke.sh` over the first `200`.
 
-### Why `--force-recreate` is not optional
+### Applying a `.env` change
 
-vLLM bakes its CLI arguments into the container at creation. A plain `up -d` sees
-an already-running container and leaves it alone, so **a `.env` edit appears to
-do nothing**. Always recreate after changing configuration.
+A plain `docker compose up -d` applies it. Compose keeps a hash of each
+container's settings, with the `.env` values already filled in, and recreates the
+container whenever that hash changes. Switching between the gemma-4 and gpt-oss
+blocks, a shell override, or changing `VLLM_KV_CACHE_MEMORY` by a single byte all
+produce a new hash (checked on Compose v5.5.1 with `docker compose config --hash`
+and `up -d --dry-run`). Running from the repo root with
+`-f vllm_openai_xpu/compose.yaml` reads the same `.env`.
+
+Two things do **not** pick up an edit: `docker compose restart`, which restarts
+the existing container with its old settings, and an `export`ed shell variable,
+which beats `.env` until you `unset` it. Add `--force-recreate` only when you want
+a fresh container with unchanged settings, for example to start from an empty
+prefix cache.
 
 ---
 
@@ -111,7 +125,7 @@ just `VLLM_MODEL`.
 
 > **The variables are not independent.** `VLLM_KV_CACHE_MEMORY` is sized for a
 > specific model's weights and OOMs rather than shrinking. gemma-4's weights
-> (16.93 GiB) plus gpt-oss's KV pin (8.0 GiB) exceed the 22.33 GiB free on the
+> (15.76 GiB) plus gpt-oss's KV pin (8.0 GiB) exceed the 22.33 GiB free on the
 > card and fail at boot. Switch a whole block at once.
 
 ---
@@ -120,7 +134,7 @@ just `VLLM_MODEL`.
 
 | | gpt-oss-20b | gemma-4-26B-A4B-it (int4) |
 |---|---|---|
-| weights on device | 12.87 GiB | 16.93 GiB |
+| weights on device | 12.87 GiB | 15.76 GiB |
 | decode | 83.2 tok/s (**chunks** — understated, see note) | **56.2 tok/s** (true tokens) |
 | TTFT, ~55-token prompt | ~76 ms | ~89 ms reasoning off / ~128 ms on |
 | KV pool | 338,928 tok | 152,592 tok |
@@ -168,7 +182,7 @@ VLLM_MAX_MODEL_LEN=131072 \
 VLLM_KV_CACHE_MEMORY=8603448832 \
 VLLM_EAGER_FLAG=--enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
-docker compose up -d --force-recreate
+docker compose up -d
 ```
 
 Confirm it took over before trusting it:
@@ -197,7 +211,7 @@ too — see *Model naming*.
 
 ```bash
 docker compose down
-docker compose up -d --force-recreate
+docker compose up -d
 ```
 
 No variables. If you used `export` rather than a one-line prefix, the old values
@@ -235,7 +249,7 @@ Expected in the container log:
 | model | log lines |
 |---|---|
 | gpt-oss-20b | `Model loading took 12.87 GiB`, `GPU KV cache size: 338,928 tokens … 2.59x` |
-| gemma-4 | `Model loading took 16.93 GiB`, `GPU KV cache size: 152,592 tokens … 1.16x` |
+| gemma-4 | `Model loading took 15.76 GiB`, `GPU KV cache size: 152,592 tokens … 1.16x` |
 
 For gemma-4 the log should also show the full quantization chain, which confirms
 the int4 kernels actually engaged rather than silently falling back:
@@ -383,6 +397,89 @@ Two integration details that cause silent breakage:
 
 ---
 
+## Per-request stats — TTFT and tok/s
+
+The OpenAI API returns token counts (`usage`) but no timing. vLLM v0.30.0 can
+add timing as well, and this engine turns it on with
+`--enable-per-request-metrics`. A `/v1/chat/completions` or `/v1/completions`
+response then carries a `metrics` object (streams need one more step, below):
+
+| Field | What it measures |
+|---|---|
+| `time_to_first_token_ms` | From the moment the scheduler picks the request up to the first token, so it covers the whole prefill |
+| `queue_time_ms` | Time spent waiting before that, when the engine was busy |
+| `generation_time_ms` | First token to last token — decode only |
+| `mean_itl_ms` | Average gap between tokens during decode |
+| `tokens_per_second` | All generated tokens ÷ (prefill + decode) |
+| `speculative_decoding` | Draft-token stats. Always `null` here, since this engine runs no speculative decoding. Streams leave it out |
+
+A real one, from gemma-4 on the Arc Pro B70 (2026-09-26, 29-token prompt, 193
+tokens back, thinking off, rounded):
+
+```json
+"metrics": {
+  "time_to_first_token_ms": 79.3,
+  "generation_time_ms": 2691.1,
+  "queue_time_ms": 0.01,
+  "mean_itl_ms": 14.02,
+  "tokens_per_second": 69.7,
+  "speculative_decoding": null
+}
+```
+
+**Streaming needs one more thing from the client.** A stream carries `metrics`
+only in its final usage chunk (the one with `"choices": []`), and vLLM sends that
+chunk only when the request asks for it:
+
+```json
+"stream": true,
+"stream_options": {"include_usage": true}
+```
+
+Without it a stream has no `metrics`.
+
+**When `metrics` is `null` or missing.** vLLM leaves it out for a request with
+`n` > 1, for a `/v1/completions` call with a list of prompts, and on the
+`/v1/responses` and `/v1/messages` endpoints. A single `null` field is normal
+too: `mean_itl_ms` is `null` when only one token came back.
+
+Things to know when reading the numbers:
+
+- **`tokens_per_second` is not the decode rate.** It includes prefill, so on a
+  long prompt it reads far below the real decode speed. The decode rate is
+  `1000 / mean_itl_ms`. Measured on the same B70 with an 8,097-token cold
+  prompt: TTFT 13.3 s and decode 47.7 tok/s (decode itself slows as the
+  context grows), but `tokens_per_second` only 7.9.
+- **TTFT here leaves out queueing and the HTTP side.** It starts when the
+  scheduler takes the request, so waiting in the queue is reported separately
+  as `queue_time_ms`, and chat-template rendering, tokenization, image
+  preprocessing and network time aren't counted at all. On an idle engine a
+  client-side stopwatch reads a little higher (32 ms against 27.7 ms,
+  measured). Under load, add `queue_time_ms` on top.
+- **Reasoning counts.** With thinking on, `time_to_first_token_ms` is the time
+  to the first reasoning token, not to the first word of the answer, and
+  `tokens_per_second` and `mean_itl_ms` include the trace, the same way
+  `usage.completion_tokens` does.
+
+It needs the engine's stats logging, which is on by default. vLLM refuses to
+start if `--disable-log-stats` is added alongside it.
+
+**Don't add `--enable-force-include-usage` to save clients from sending
+`stream_options`.** It puts a running `usage` total on every chunk, and Open
+WebUI adds those up, so its token counts come out inflated. Reproduced offline
+with Open WebUI's own merge code: 600 prompt tokens reported for 100.
+
+### What the clients do with it
+
+This comes from reading Open WebUI's source and a live test on this host.
+Other versions may behave differently.
+
+| Client | What happens to `metrics` |
+|---|---|
+| Open WebUI v0.11.4 | Ignored: it reads only `usage` and llama.cpp's `timings` |
+
+---
+
 ## gemma-4 in depth
 
 ### Checkpoint constraint
@@ -390,7 +487,7 @@ Two integration details that cause silent breakage:
 The checkpoint must be **int4-symmetric with `group_size` 32 or channelwise**.
 The XPU expert kernel (`XPUExpertsWNA16`) accepts only those two schemes, so the
 smaller and far more popular **group-64** builds are rejected at load despite
-being ~2 GiB lighter. Check
+being ~0.7 GiB lighter. Check
 `quantization_config.config_groups.*.weights.group_size` before trying any other
 MoE checkpoint.
 
@@ -563,7 +660,7 @@ looked like it should defeat reuse on long prompts. It doesn't.
 
 So conversation and growing context are fine; a large **cold** context (fresh RAG
 document, big paste) is where it hurts. **You pay it once per document per engine
-lifetime** — the cache is VRAM-resident, so a `--force-recreate` throws it away.
+lifetime** — the cache is VRAM-resident, so recreating the container throws it away.
 
 Two practical consequences:
 
@@ -629,7 +726,7 @@ fixable from configuration.
 
 ### Why gemma-4 is slower than gpt-oss
 
-Not bandwidth — gemma reads *less* per token (~3.35 GB vs ~3.71 GB, counting
+Not bandwidth — gemma reads *less* per token (~3.23 GB vs ~3.71 GB, counting
 int4/MXFP4 weights plus the unquantized embedding). It's op count and
 granularity:
 
@@ -637,12 +734,12 @@ granularity:
 |---|---|---|
 | layers | 30 | 24 |
 | experts activated / layer | 8 of 128 | 4 of 32 |
-| expert intermediate size | 768 | 2880 |
+| expert intermediate size | 704 | 2880 |
 | expert GEMVs per token | **240** | 96 |
 | attention backend | TRITON_ATTN (forced) | FLASH_ATTN |
 | expert kernel | generic `XPUExpertsWNA16` | `XPUExpertsMxFp4` (tuned) |
 
-2.5× as many expert matrix multiplies per token, each ~3.75× narrower. Small
+2.5× as many expert matrix multiplies per token, each ~4.1× narrower. Small
 matrices use the GPU poorly and each costs a launch. Compiled mode recovers part
 of that; the rest is architectural, and it sets the ceiling — there is no
 configuration that makes this model reach gpt-oss's rate.
@@ -900,7 +997,7 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 
 | Symptom | Cause |
 |---|---|
-| `.env` edit had no effect | Missing `--force-recreate`; the container kept its baked-in args |
+| `.env` edit had no effect | `docker compose restart` was used (it keeps the old settings; use `up -d`), the file wasn't saved, or an `export`ed shell variable is overriding it (`env \| grep VLLM_`) |
 | `HTTP 404 ... model does not exist` | Stale `MODEL` in your shell, or the gateway points at the other block's name. `bench.sh` prints what *is* served |
 | Reasoning field always empty | Two candidates: gemma-4 without `enable_thinking` (it's opt-in by default), or the client reading `reasoning_content` instead of `reasoning` |
 | Trace returned but no answer | Reasoning consumed the whole `max_tokens`. Raise it — and note a hard prompt can burn 6,000 tokens without closing the trace |
@@ -909,6 +1006,7 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 | A big prompt seems to hang | Not hung — quadratic prefill. 9.6k ≈ 26 s, 32k ≈ 5 min, 64.7k ≈ 22 min. Raise your client timeout |
 | Context ceiling dropped after a tuning change | You raised `--max-num-batched-tokens`; it inflates the sliding-window reservation |
 | Boot segfaults in `getSortedImages` | `SYCL_CACHE_PERSISTENT=1` with the V2 runner. Must stay `0` |
+| `metrics` is `null` or missing | Engine not recreated since the flag was added; the stream didn't send `stream_options.include_usage`; the request went through a gateway that drops it (see *What the clients do with it*); `n` > 1 or a `/v1/completions` call with a list of prompts; or the endpoint is `/v1/responses` or `/v1/messages`. Only `mean_itl_ms` `null` just means one token came back |
 | Same id listed twice | A `--served-model-name` value is repeated in `compose.yaml`; vLLM does not dedupe |
 | Orphan-container warning | The other engine's container lingers; `down` that folder. Never `--remove-orphans` |
 

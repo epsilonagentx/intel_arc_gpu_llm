@@ -120,10 +120,9 @@ So a swap is an edit to that file, then:
 docker compose up -d vllm-scaler
 ```
 
-No `--force-recreate` needed, unlike the `.env`-wired engines: editing
-`compose.yaml` changes the service's config hash, so Compose recreates the
-container by itself. That also means there is no way to "forget" to recreate
-here — the failure mode the other two have doesn't exist.
+No `--force-recreate` needed: editing `compose.yaml` changes the service's
+config hash, so Compose recreates the container by itself. The `.env`-wired
+engines work the same way, since their `.env` values are part of that hash.
 
 There is no `.env.example` in this folder on purpose. These flags are not
 independent of one another, and three of them will break the engine or silently

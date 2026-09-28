@@ -159,15 +159,12 @@ count. The numbers are the ones measured at the time.
 |---|---|---|---|---|---|---|
 | gpt-oss-20b | `openai/gpt-oss-20b` | MXFP4 (native) | 12.87 GiB | •&nbsp;`vllm_xpu`<br>•&nbsp;`scaler`<br>•&nbsp;`vllm_openai_xpu` | 131,072 | • `scaler`: 85.6 tok/s ¹<br>• `vllm_openai_xpu`: 83.1 tok/s ¹ |
 | gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | •&nbsp;`vllm_openai_xpu` | 45,056 | 56.5 tok/s |
-| gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` ² | int4 W4A16, group-32 | 16.93 GiB | •&nbsp;`vllm_openai_xpu` | 131,072 | 56.2 tok/s |
-| Qwen3-32B-AWQ | `Qwen/Qwen3-32B-AWQ` | AWQ int4 | 18.14 GiB | •&nbsp;`vllm_xpu` ³ | 7,168 | not recorded |
+| Qwen3-32B-AWQ | `Qwen/Qwen3-32B-AWQ` | AWQ int4 | 18.14 GiB | •&nbsp;`vllm_xpu` ² | 7,168 | not recorded |
 
 ¹ `bench.sh` counts streamed chunks, so both gpt-oss figures slightly
-under-state the true token rate. The gemma-4 figures are true tokens from the
+under-state the true token rate. The gemma-4 figure is true tokens from the
 usage chunk.
-² This repo stopped being downloadable (HTTP 401) on 2026-09-21. It still
-works from a local cache, but a fresh install should use the `adeepv` row.
-³ Measured on the predecessor image, `intel/vllm:0.17.0-xpu`, and not re-run
+² Measured on the predecessor image, `intel/vllm:0.17.0-xpu`, and not re-run
 since. Treat it as historical until it's booted on the current image.
 
 What the table says about quantization on this card:
@@ -178,8 +175,8 @@ What the table says about quantization on this card:
   would also pass), in compressed-tensors format. The XPU expert kernel rejects
   the more common group-64 builds at load. Check
   `quantization_config.config_groups.*.weights.group_size` before downloading
-  any MoE checkpoint. Both checkpoints above are built from Google's own QAT
-  weights: `adeepv` repacks them and `reinforce20001` re-quantizes them.
+  any MoE checkpoint. The `adeepv` checkpoint is Google's own QAT weights
+  repacked into compressed-tensors format.
 - **Qwen3 dense ran as AWQ.** The official FP8 weights hit an XPU bug (see
   *Quantization on the B60*).
 - **Fresher models are a swap, not only a RAG problem.** gpt-oss-20b's
