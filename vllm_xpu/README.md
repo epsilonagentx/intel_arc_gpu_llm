@@ -15,9 +15,13 @@ with `restart: unless-stopped`, so it comes back on its own after a reboot.
 |-----|----------------|
 | [README.md](../README.md) | The stack as a whole — which engine to pick, monitoring, firewall |
 | [DEVELOPER.md](../DEVELOPER.md) | Why the numbers are what they are |
+| [INTEL_ARC_B60.md](../INTEL_ARC_B60.md), [INTEL_ARC_B70.md](../INTEL_ARC_B70.md) | What differs between the two cards |
 | **This file** | Running *this* engine: start it, upgrade it, swap its model, what bites |
 
-> **One GPU, one engine.** `gpt-oss-20b` needs roughly 17 GiB of the card's
+Everything in this folder was validated on the Arc Pro B60. The B70 hasn't been
+tested with this engine yet.
+
+> **One GPU, one engine.** `gpt-oss-20b` needs roughly 17 GiB of a B60's
 > ~22.7 GiB, so this service and the ones in `scaler/` or `vllm_openai_xpu/`
 > cannot run together. Bring the other one down first. All three deliberately
 > share the Compose project name `llm` so they reuse the same weight cache —
@@ -119,8 +123,8 @@ its default.
 **`VLLM_GPU_MEMORY_UTILIZATION` (default `0.80`) — the one with teeth.** This
 sizes the weights plus the KV pool, but on this XPU build it does **not** cap
 torch.compile's kernel and workspace buffers, and those keep growing as new
-request shapes get compiled. At `0.86` the card was measured filled to 22.67 of
-22.71 GiB, leaving 40 MiB of headroom, and the result was OOM-on-the-edge
+request shapes get compiled. On the B60, at `0.86` the card was measured filled
+to 22.67 of 22.71 GiB, leaving 40 MiB of headroom, and the result was OOM-on-the-edge
 behavior and 504s under load. Treat `0.86` as a wall you never walk up to.
 `0.80` is comfortable now that the displays are driven by the integrated GPU and
 nothing else competes for VRAM; if you're sharing the card with a desktop

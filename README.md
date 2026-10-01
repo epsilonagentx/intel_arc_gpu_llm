@@ -4,18 +4,20 @@
 >
 > 💡 Using it? **Fork** the repo (don't just download a copy) and work on your own branch — that keeps you linked to upstream for updates and makes contributing back easy. See [how to fork a repo](https://docs.github.com/en/get-started/quickstart/fork-a-repo), or [fork this one directly](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork).
 
-Hardware: Intel Arc Pro B60 (24 GB VRAM, `xe` driver). **Host OS: Linux only** —
+Hardware: an Intel Arc Pro B60 (24 GB) or B70 (32 GB) on the `xe` driver. The
+settings that depend on the card, and what has been measured on each, are in
+[INTEL_ARC_B60.md](INTEL_ARC_B60.md) and [INTEL_ARC_B70.md](INTEL_ARC_B70.md);
+everything else in these docs applies to both. **Host OS: Linux only** —
 any modern distribution with Docker and the Intel `xe` GPU driver. Windows and
 macOS are not supported: the `xe` kernel driver and the sysfs/hwmon helper
 scripts (`watt.sh`, the troubleshooting `/proc` reads) are Linux-specific.
 Three interchangeable engine containers ship here; *Choosing and running an
 engine* below covers which to pick and where each one's own guide lives. This
-is the **how-to** for running and operating the stack. The *why* behind the
+is the **how-to** for running the stack. The *why* behind the
 config (VRAM sizing, the util decision, quantization choices) is in
 [DEVELOPER.md](DEVELOPER.md); measurements and the record of what has already
 been tried and rejected on the scaler engine are in
-[scaler/README.md](scaler/README.md); a configuration overview is
-in [INTEL_ARC_B60.md](INTEL_ARC_B60.md).
+[scaler/README.md](scaler/README.md).
 
 The stack runs **one** vLLM engine at a time on port 8000 (LAN-exposed), chosen
 from **three** interchangeable images — stock `intel/vllm`, Intel's `llm-scaler`
@@ -34,14 +36,14 @@ silently changing the model behind a fixed label.
 ## Choosing and running an engine
 
 Three interchangeable vLLM engines, each in its own folder, all publishing
-`:8000`. **Each folder has its own README, and that is where the operator detail
-for that engine lives** — how to run it, upgrade it, swap its model, and what
+`:8000`. **Each folder has its own README, and that is where the detail for
+that engine lives** — how to run it, upgrade it, swap its model, and what
 bites. Pick one and start there:
 
 | folder | image | serves | pick it for |
 |---|---|---|---|
 | [`vllm_xpu/`](vllm_xpu/README.md) | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
-| [`scaler/`](scaler/README.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s) |
+| [`scaler/`](scaler/README.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s on the B60) |
 | [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.30.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
 
 **One GPU → exactly one engine at a time.** Each needs 13–16 GiB of weights plus
@@ -101,7 +103,8 @@ the engine or the setup around it.
 
 `scaler/` is Intel's fork, tuned for Arc B-series. On this hardware it is the
 faster of the two gpt-oss engines — `0.26.0-b2` measures **85.6 tok/s**
-single-stream on `./bench.sh 400` at ~72 ms TTFT, the best figure recorded here —
+single-stream on `./bench.sh 400` at ~72 ms TTFT on the B60, the best gpt-oss
+figure recorded here —
 and its image unlocks quantized-MoE paths the stock one lacks. It has
 engine-specific rules that matter before you run it in anger (**do not use
 `:latest`**, why it must stay `--enforce-eager`, and how to re-derive its KV-pool
@@ -117,7 +120,7 @@ with the Intel-attention switch, which costs image input —
 
 **Benchmark before adopting any of them.** The win has to be measured on your own
 box, and the three sit on **different vLLM bases** (scaler → 0.26.0, stock →
-0.21.0, upstream → 0.29.0), so any difference mixes a fork's optimisations with an
+0.21.0, upstream → 0.30.0), so any difference mixes a fork's optimisations with an
 engine-version gap. Compare at equal `max_tokens`, and discard the first run after
 a cold start or a long idle — otherwise the numbers lie. The hygiene rules are in
 [scaler/README.md](scaler/README.md).
@@ -180,8 +183,8 @@ VLLM_ENDPOINT=http://192.168.x.x:8000 ./smoke.sh    # remote target
 
 ## Power & live monitoring
 
-**Power — `watt.sh`** reads the B60's `xe` hwmon energy counters straight from
-sysfs (no root, no packages):
+**Power — `watt.sh`** reads the card's `xe` hwmon energy counters straight from
+sysfs (no root, no packages). It works the same on the B60 and the B70:
 
 ```bash
 ./watt.sh            # 1s samples
@@ -194,8 +197,11 @@ Ctrl-C prints min/avg/max for the run — handy running alongside `bench.sh`. Th
 the delta between samples.
 
 **Live utilization/VRAM — `nvtop`** (v3.0.x or newer) is the working TUI monitor
-for the `xe` B60. `intel_gpu_top` does **not** work here (it's i915-only);
-Intel's `xpu-smi` is an alternative if you install it.
+on the `xe` driver. **Run it with `sudo`:** the engine runs as root inside its
+container, and a monitor running as your own user can't read root's GPU usage,
+so it shows 0% while the card is busy. `intel_gpu_top` from older
+intel-gpu-tools releases is i915-only and fails on `xe`; Intel's `xpu-smi` is an
+alternative if you install it.
 
 ---
 

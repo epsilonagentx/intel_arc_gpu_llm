@@ -54,8 +54,9 @@ services:
     # without re-verifying correctness. ./README.md §4
     # gpt-oss-20b is MXFP4 (pre-quantized) — do NOT pass --quantization.
     # --kv-cache-memory-bytes OVERRIDES --gpu-memory-utilization (which is kept
-    # only as the fallback if the byte value is removed). The value is absolute
-    # and image-specific — re-derive it on an image bump. ./README.md §3
+    # only as the fallback if the byte value is removed). The value is absolute,
+    # image-specific and the B60's — re-derive it on an image bump or another
+    # card. ./README.md §3
     command:
       - |
         vllm serve openai/gpt-oss-20b \
@@ -70,7 +71,7 @@ services:
           --tool-call-parser openai \
           --served-model-name gpt-oss-20b
     #
-    # --- Qwen3.8-27B (inactive) ---
+    # --- Qwen3.8-27B (inactive) — measured on the B70, ../INTEL_ARC_B70.md ---
     # Full-precision checkpoint, quantized to int4 at load (Intel's supported
     # route for this model). 17.8 GiB of weights leave room for 96k, not 128k:
     # 128k needs 8.09 GiB of KV and util 0.80 left 4.13 GiB, hence util 0.90.
