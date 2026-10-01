@@ -24,15 +24,16 @@ prediction or an extrapolation, it says so.
 
 | | |
 |---|---|
+| GPU | Arc Pro B70 |
 | Image | `vllm/vllm-openai-xpu:v0.30.0` |
 | Model runner | V2 (upstream default from 0.29.0) |
 | Model served | `gemma-4-26B-A4B-it`, offline int4 group-32 |
 | Context | 131,072 |
-| KV pool | 152,592 tokens = 1.16× concurrency |
-| Reasoning | opt-in per request |
-| Attention | Intel's flash-attention kernel, so **text-only** — see [*Intel attention for gemma-4*](#intel-attention-for-gemma-4) |
+| KV pool | 394,408 tokens = 3.01× concurrency, from a 10.5 GiB `VLLM_KV_CACHE_MEMORY` pin |
+| Reasoning | on by default (`VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS={"enable_thinking":true}`); a request can still turn it off |
+| Attention | Intel's flash-attention kernel, so **text-only** — see [*Intel attention for gemma-4*](#intel-attention-for-gemma-4) and [PLUGIN.md](PLUGIN.md) |
 | Per-request stats | on — `metrics` in chat and completions responses; a stream needs `include_usage` |
-| `smoke.sh` | ALL PASS |
+| `smoke.sh` | ALL PASS, with reasoning on and off |
 
 Kept as the cross-engine comparison point, measured for **gpt-oss-20b** on this
 same engine: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928 tokens
@@ -58,6 +59,10 @@ same engine: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928 tokens
 - [Shared project and volumes](#shared-project-and-volumes)
 - [Troubleshooting](#troubleshooting)
 - [Open questions](#open-questions)
+
+The plugin that lets gemma-4 use Intel's attention kernel has its own page,
+[PLUGIN.md](PLUGIN.md): what it is, how vLLM loads it, where the idea came from,
+and why it costs image input.
 
 ---
 
@@ -118,7 +123,7 @@ silently degrades it.
 | `VLLM_MAX_MODEL_LEN` **!** | Context window; must fit VRAM after weights |
 | `VLLM_KV_CACHE_MEMORY` **!** | KV pool in **absolute bytes**; overrides util, skips profiling, and OOMs rather than shrinking |
 | `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required by gpt-oss's 8.6 GiB pin) or `--no-enforce-eager` (gemma-4, measured fine at 131,072). Passed whole — `--enforce-eager=False` does not parse |
-| `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. Currently unset, so reasoning is opt-in |
+| `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. Unset in the template, so gemma-4 reasoning is opt-in; `{"enable_thinking":true}` turns it on for every request |
 | `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` puts gemma-4 on Intel's kernel. Set it together with the next one — see *Intel attention for gemma-4* |
 | `VLLM_TEXT_ONLY_FLAG` | `--no-language-model-only` (default) or `--language-model-only`, which turns image input off. Passed whole, like `VLLM_EAGER_FLAG` |
 
@@ -275,16 +280,16 @@ DeepSeek's `reasoning_content` spelling will silently see nothing and conclude
 the parser is broken. It isn't — check the field name first.
 
 - **gpt-oss-20b** — always reasons, no off switch.
-- **gemma-4** — **opt-in, and that is the deployed default.**
-  `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` is unset, so the compose default `null`
-  applies and the server adds no template defaults. A request asks for reasoning
+- **gemma-4** — **opt-in out of the box.** With
+  `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` unset, the compose default `null` applies
+  and the server adds no template defaults. A request asks for reasoning
   explicitly:
 
 ```json
 "chat_template_kwargs": {"enable_thinking": true}
 ```
 
-To turn it back on for *every* request, set this in `.env` and recreate:
+To turn it on for *every* request, set this in `.env` and recreate:
 
 ```dotenv
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS={"enable_thinking":true}
@@ -637,7 +642,8 @@ both 256 and 512. vLLM puts *all* layers on it deliberately: mixing causes
 > KV head, exactly gemma-4's full-attention layout). vLLM doesn't use it because
 > the gate above asks *"are you FlashAttention 4?"*, a question about CUDA
 > lineage, rather than *"can you do head_size 512?"*. No setting reaches past that
-> gate; the small plugin in `head512_plugin/` does — see the next section.
+> gate; the small plugin in `head512_plugin/` does — see the next section and
+> [PLUGIN.md](PLUGIN.md).
 
 Requesting `--attention-backend=FLASH_ATTN` on its own is **honoured, then
 refused** on the head-size gate. (vLLM 0.30 has no `VLLM_ATTENTION_BACKEND`
@@ -675,7 +681,8 @@ general plugin that makes it accept exactly 512 on XPU. Compose mounts it at
 it and logs `xpu_head512: FLASH_ATTN on XPU now accepts head size 512`. It
 changes nothing else: with the switch off, gemma-4 still gets Triton, and
 gpt-oss's head size is 64. FLASH_ATTN on XPU uses 64-token KV blocks, which is
-the block size the head-512 decode kernel is built for.
+the block size the head-512 decode kernel is built for. [PLUGIN.md](PLUGIN.md)
+walks through the plugin file by file.
 
 **Measured** on the B70 on 2026-09-30. Both columns use the same checkpoint, the
 131,072 context cap, the 10.5 GiB KV pin and the same scripts, with true token
@@ -1081,7 +1088,7 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 | `400` on long prompts | Above the cap. Both blocks now run 131,072; the ceiling is 162,496 and costs no VRAM |
 | A big prompt seems to hang | Not hung — quadratic prefill on Triton. 9.6k ≈ 26 s, 32k ≈ 5 min, 64.7k ≈ 22 min (B60). Raise your client timeout, or switch on Intel attention if you can do without images |
 | Boot fails: `mm_prefix … requires FlashAttention v4` | `VLLM_ATTN_BACKEND=FLASH_ATTN` without `VLLM_TEXT_ONLY_FLAG=--language-model-only`. Set both or neither |
-| Boot fails with FLASH_ATTN refusing head size 512 | The plugin didn't load. Check the `head512_plugin` mount and `PYTHONPATH` in `compose.yaml`, and look for `xpu_head512` in the log |
+| Boot fails with FLASH_ATTN refusing head size 512 | The plugin didn't load. Check the `head512_plugin` mount and `PYTHONPATH` in `compose.yaml`, and look for `xpu_head512` in the log. [PLUGIN.md](PLUGIN.md) covers how it loads |
 | `400 At most 0 image(s) may be provided in one prompt` | Intel attention is on, which means text-only. Comment out both switch lines and `up -d` to get images back |
 | Much slower than *Intel attention for gemma-4* says, after an image upgrade | Look for `XPU kernel not compiled … falling back` in the log: a kernel variant is missing from the new image |
 | Context ceiling dropped after a tuning change | You raised `--max-num-batched-tokens`; it inflates the sliding-window reservation |
