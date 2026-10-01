@@ -9,6 +9,9 @@
 # Logs & runtime output
 *.log
 
+# Local-only Open WebUI filter (installed in the local Open WebUI, not shipped)
+open_web_ui/vllm_stats_filter.py
+
 # OS cruft
 .DS_Store
 Thumbs.db

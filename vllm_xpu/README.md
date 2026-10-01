@@ -15,9 +15,13 @@ with `restart: unless-stopped`, so it comes back on its own after a reboot.
 |-----|----------------|
 | [README.md](../README.md) | The stack as a whole — which engine to pick, monitoring, firewall |
 | [DEVELOPER.md](../DEVELOPER.md) | Why the numbers are what they are |
+| [INTEL_ARC_B60.md](../INTEL_ARC_B60.md), [INTEL_ARC_B70.md](../INTEL_ARC_B70.md) | What differs between the two cards |
 | **This file** | Running *this* engine: start it, upgrade it, swap its model, what bites |
 
-> **One GPU, one engine.** `gpt-oss-20b` needs roughly 17 GiB of the card's
+Everything in this folder was validated on the Arc Pro B60. The B70 hasn't been
+tested with this engine yet.
+
+> **One GPU, one engine.** `gpt-oss-20b` needs roughly 17 GiB of a B60's
 > ~22.7 GiB, so this service and the ones in `scaler/` or `vllm_openai_xpu/`
 > cannot run together. Bring the other one down first. All three deliberately
 > share the Compose project name `llm` so they reuse the same weight cache —
@@ -30,10 +34,9 @@ with `restart: unless-stopped`, so it comes back on its own after a reboot.
 
 ```bash
 cd vllm_xpu
-docker compose up -d vllm                    # start
+docker compose up -d vllm                    # start, or apply a config edit
 docker compose logs -f vllm                  # follow startup
 docker compose stop vllm                     # stop
-docker compose up -d --force-recreate vllm   # apply a config edit
 ```
 
 Or from the repo root with `-f vllm_xpu/compose.yaml` in place of the `cd`. Either
@@ -120,8 +123,8 @@ its default.
 **`VLLM_GPU_MEMORY_UTILIZATION` (default `0.80`) — the one with teeth.** This
 sizes the weights plus the KV pool, but on this XPU build it does **not** cap
 torch.compile's kernel and workspace buffers, and those keep growing as new
-request shapes get compiled. At `0.86` the card was measured filled to 22.67 of
-22.71 GiB, leaving 40 MiB of headroom, and the result was OOM-on-the-edge
+request shapes get compiled. On the B60, at `0.86` the card was measured filled
+to 22.67 of 22.71 GiB, leaving 40 MiB of headroom, and the result was OOM-on-the-edge
 behavior and 504s under load. Treat `0.86` as a wall you never walk up to.
 `0.80` is comfortable now that the displays are driven by the integrated GPU and
 nothing else competes for VRAM; if you're sharing the card with a desktop
@@ -136,7 +139,7 @@ submit, not a speed setting. Decode rate doesn't change with it.
 
 ## Swapping the served model
 
-Two steps: set the model-specific values in `.env`, then force-recreate. The
+Two steps: set the model-specific values in `.env`, then run `up -d` again. The
 compose file is never edited.
 
 **Step 1 — the model-specific variables:**
@@ -150,15 +153,15 @@ compose file is never edited.
 | `VLLM_MAX_MODEL_LEN` | Context window — must fit VRAM after weights and compile buffers |
 | `VLLM_GPU_MEMORY_UTILIZATION` | See the warning above before raising it |
 
-**Step 2 — recreate:**
+**Step 2 — apply:**
 
 ```bash
-docker compose up -d --force-recreate vllm
+docker compose up -d vllm
 ```
 
-`--force-recreate` is not optional. vLLM bakes its CLI arguments into the
-container at creation, so a plain `up -d` finds a running container, leaves it
-alone, and **your `.env` edit appears to do nothing.**
+Compose sees the changed settings and recreates the container by itself.
+`docker compose restart` would not: it restarts the old container with its old
+settings.
 
 **If the model is already cached**, that's the whole procedure — no re-download.
 Compile artifacts in `vllm-cache` are model-specific, so the first request after
@@ -191,7 +194,7 @@ VLLM_REASONING_PARSER=qwen3
 VLLM_TOOL_CALL_PARSER=hermes
 ```
 
-…then force-recreate. What changed, and why each one matters:
+…then `docker compose up -d vllm`. What changed, and why each one matters:
 
 - **Context 131,072 → 7,168.** The empirical B60 cap for this model; 10k and 12k
   both fail vLLM's KV pre-check at startup. Qwen3-32B is **dense**, so unlike
@@ -286,7 +289,9 @@ Unlike the upstream engine, this one runs happily with
 side effect of three engines sharing one project name. Stop the other engine from
 *its* folder; don't take Compose's suggestion to prune orphans.
 
-**`.env` edit had no effect.** Missing `--force-recreate`.
+**`.env` edit had no effect.** Usually `docker compose restart` was used, which
+keeps the old settings; use `up -d`. An `export`ed shell variable also beats
+`.env` until you `unset` it.
 
 **Port 8000 is already taken.** Something else is serving on it. A local
 `llama.cpp` setup is the usual culprit, and if it's under a process supervisor it
