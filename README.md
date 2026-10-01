@@ -110,8 +110,9 @@ byte value); all of them, with the measurement log, are in
 
 `vllm_openai_xpu/` runs upstream's own image and is what's live today. It is
 several vLLM minors newer than the others and the only engine here whose kernels
-load gemma-4. Its guide covers both models it's validated for, and the quadratic
-prefill behavior that gemma-4 brings with it —
+load gemma-4. Its guide covers both models it's validated for, and gemma-4's
+prefill trade-off: quadratic on the default Triton backend, and 16–28× faster
+with the Intel-attention switch, which costs image input —
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md).
 
 **Benchmark before adopting any of them.** The win has to be measured on your own

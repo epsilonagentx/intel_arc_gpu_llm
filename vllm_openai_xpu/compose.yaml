@@ -35,6 +35,9 @@ services:
       # Clear once after any image bump:
       #   docker compose down && docker volume rm llm_vllm-openai-cache
       - vllm-openai-cache:/root/.cache/vllm
+      # vLLM plugin that lets FLASH_ATTN take head size 512 on XPU. Inert unless
+      # VLLM_ATTN_BACKEND=FLASH_ATTN. ./README.md "Intel attention for gemma-4"
+      - ./head512_plugin:/opt/vllm-plugins:ro
     environment:
       HF_HOME: /root/.cache/huggingface
       ZES_ENABLE_SYSMAN: "1"
@@ -52,6 +55,7 @@ services:
       # Integer only — a blank value crashes at boot, so the `:-1` is load-bearing.
       VLLM_USE_V2_MODEL_RUNNER: "${VLLM_USE_V2_MODEL_RUNNER:-1}"
       HF_TOKEN: "${HF_TOKEN:-}"                # empty = anonymous; no secret in this file
+      PYTHONPATH: /opt/vllm-plugins            # where vLLM finds the head512 plugin above
     ports:
       - "8000:8000"          # same port as the other engines (only one runs at a time)
     # ENTRYPOINT is ["vllm","serve"], so command is ARGS ONLY — no shell wrapper
@@ -67,8 +71,8 @@ services:
     # Set VLLM_EAGER_FLAG=--no-enforce-eager to take it; the flag is passed
     # whole because argparse builds this as a BooleanOptionalAction, so
     # `--enforce-eager=False` does NOT parse.
-    # Prefill is UNCHANGED by it (still quadratic, exponent 2.048 measured -- that
-    # is the attention backend, not launch overhead).
+    # Prefill is UNCHANGED by it (on TRITON_ATTN still quadratic, exponent 2.048
+    # measured -- that is the attention backend, not launch overhead).
     # VLLM_XPU_ENABLE_XPU_GRAPH=1 only works in compiled mode (it is a no-op
     # under eager) and adds a further +0.5% for 1.54 GiB of capture memory --
     # not worth the pool. ./README.md "Performance"
@@ -112,6 +116,13 @@ services:
       # chunk, so the client must send stream_options.include_usage.
       # ./README.md "Per-request stats"
       - "--enable-per-request-metrics"
+      # Attention backend. `auto` lets vLLM choose (TRITON_ATTN for gemma-4,
+      # FLASH_ATTN for gpt-oss). FLASH_ATTN plus --language-model-only runs
+      # gemma-4 on Intel's own kernel: much faster prefill, but no image input.
+      # The text-only flag is passed whole, like VLLM_EAGER_FLAG.
+      # ./README.md "Intel attention for gemma-4"
+      - "--attention-backend=${VLLM_ATTN_BACKEND:-auto}"
+      - "${VLLM_TEXT_ONLY_FLAG:---no-language-model-only}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 30s

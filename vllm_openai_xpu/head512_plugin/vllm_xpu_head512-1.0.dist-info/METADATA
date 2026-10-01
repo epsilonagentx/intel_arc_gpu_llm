@@ -1,0 +1,4 @@
+Metadata-Version: 2.1
+Name: vllm-xpu-head512
+Version: 1.0
+Summary: Let vLLM's XPU flash-attention backend take head size 512 (gemma-4)

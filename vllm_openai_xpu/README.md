@@ -30,6 +30,7 @@ prediction or an extrapolation, it says so.
 | Context | 131,072 |
 | KV pool | 152,592 tokens = 1.16× concurrency |
 | Reasoning | opt-in per request |
+| Attention | Intel's flash-attention kernel, so **text-only** — see [*Intel attention for gemma-4*](#intel-attention-for-gemma-4) |
 | Per-request stats | on — `metrics` in chat and completions responses; a stream needs `include_usage` |
 | `smoke.sh` | ALL PASS |
 
@@ -51,7 +52,7 @@ same engine: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928 tokens
 - [`bench.sh` and `smoke.sh`](#benchsh-and-smokesh)
 - [Downstream consumers](#downstream-consumers)
 - [Per-request stats — TTFT and tok/s](#per-request-stats--ttft-and-toks)
-- [gemma-4 in depth](#gemma-4-in-depth) — checkpoint, context, prefill, prefix cache
+- [gemma-4 in depth](#gemma-4-in-depth) — checkpoint, context, prefill, Intel attention, prefix cache
 - [Performance](#performance)
 - [Why it is configured this way](#why-it-is-configured-this-way)
 - [Shared project and volumes](#shared-project-and-volumes)
@@ -118,6 +119,8 @@ silently degrades it.
 | `VLLM_KV_CACHE_MEMORY` **!** | KV pool in **absolute bytes**; overrides util, skips profiling, and OOMs rather than shrinking |
 | `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required by gpt-oss's 8.6 GiB pin) or `--no-enforce-eager` (gemma-4, measured fine at 131,072). Passed whole — `--enforce-eager=False` does not parse |
 | `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. Currently unset, so reasoning is opt-in |
+| `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` puts gemma-4 on Intel's kernel. Set it together with the next one — see *Intel attention for gemma-4* |
+| `VLLM_TEXT_ONLY_FLAG` | `--no-language-model-only` (default) or `--language-model-only`, which turns image input off. Passed whole, like `VLLM_EAGER_FLAG` |
 
 Shell variables beat `.env`, but **only for the names you pass** — so the
 temporary-override block under *Switching models* has to set all of them, not
@@ -141,11 +144,12 @@ just `VLLM_MODEL`.
 | concurrency | 2.59× @128k | 1.16× @131k |
 | max context | 131,072 | 131,072 (ceiling 162,496) |
 | reasoning | always on, no off switch | opt-in per request |
-| large cold prompts | linear, fine | **quadratic — see warning** |
+| large cold prompts | linear, fine | **quadratic on Triton — see warning**; fast with Intel attention |
 
-**gpt-oss-20b is still the better choice for coding-CLI traffic** through a
-gateway, because its prefill stays linear. gemma-4 is the newer and stronger
-model, and is vision-capable.
+gpt-oss-20b's prefill stays linear, which made it the better choice for
+coding-CLI traffic through a gateway while gemma-4 ran on Triton. gemma-4 is the
+newer and stronger model and is vision-capable; with Intel attention switched on
+it reads a 24k-token prompt in 4.2 s on the B70, at the cost of image input.
 
 > ⚠ **`bench.sh` under-reports gemma-4 by ~15%, and the reason matters.** It
 > counts SSE *chunks*, and with reasoning on the reasoning channel packs **1.15
@@ -566,9 +570,11 @@ protection for reach. If you run it, make sure client timeouts along the whole
 path match — and note the top of that range is **unexercised**: the largest
 prompt ever pushed through end-to-end is 64,708 tokens.
 
-### ⚠ Prefill is quadratic, and it is not tunable from here
+### ⚠ Prefill on Triton is quadratic
 
-This, not VRAM, is the real limit on usable context.
+On the default Triton backend this, not VRAM, is the real limit on usable
+context. [Intel attention](#intel-attention-for-gemma-4) removes it if you can
+do without image input.
 
 | cold prompt | wall |
 |---|---|
@@ -625,17 +631,17 @@ both 256 and 512. vLLM puts *all* layers on it deliberately: mixing causes
 *"mixed backend selection and numerical divergence"*.
 
 > **A head-512 XPU kernel does exist.** `vllm_xpu_kernels`'
-> `libattn_kernels_xe_2.so` in this image contains `chunk_policy_head512` **and**
-> `chunk_policy_head512_b16` — the block-size-16 paged variant, which is this
-> deployment's geometry — plus a head-512 paged-decode kernel. It is unreachable
-> because the gate above asks *"are you FlashAttention 4?"*, a question about
-> CUDA lineage, rather than *"can you do head_size 512?"*. An earlier revision of
-> this file said the fix was a kernel that doesn't exist; the kernel exists and
-> the plumbing doesn't. Nothing in this repo can reach it — `is_xpu() → return 2`
-> in `fa_utils.py` sits *before* the config override path, so no env var helps.
+> `libattn_kernels_xe_2.so` in this image contains the prefill kernels
+> `chunk_policy_head512` and `chunk_policy_head512_b16`, plus a head-512
+> paged-decode kernel built for 64-token blocks (`q8_h512_p64`: 8 query heads per
+> KV head, exactly gemma-4's full-attention layout). vLLM doesn't use it because
+> the gate above asks *"are you FlashAttention 4?"*, a question about CUDA
+> lineage, rather than *"can you do head_size 512?"*. No setting reaches past that
+> gate; the small plugin in `head512_plugin/` does — see the next section.
 
-`VLLM_ATTENTION_BACKEND` is **honoured, then refused** on the head-size gate —
-not ignored. Don't spend time forcing it.
+Requesting `--attention-backend=FLASH_ATTN` on its own is **honoured, then
+refused** on the head-size gate. (vLLM 0.30 has no `VLLM_ATTENTION_BACKEND`
+environment variable any more; the flag is the only way to ask.)
 
 And a hypothetical per-layer split wouldn't rescue long prompts: at 131k the five
 512-dim layers do **92.7%** of the attention work. It *would* help ordinary
@@ -643,6 +649,72 @@ traffic, though — the two layer groups cross over at
 `25 × n × 1024 = 5 × n²/2`, i.e. **n ≈ 10,240 tokens**, so below that the
 twenty-five 256-dim sliding layers carry most of the attention cost and they are
 FA2-eligible on paper.
+
+### Intel attention for gemma-4
+
+Two lines in `.env` put gemma-4 on Intel's head-512 kernel instead of Triton:
+
+```dotenv
+VLLM_ATTN_BACKEND=FLASH_ATTN
+VLLM_TEXT_ONLY_FLAG=--language-model-only
+```
+
+Then `docker compose up -d`. To go back, comment both out and run `up -d` again.
+
+**What it costs: image input.** gemma-4 attends to image tokens in both
+directions (`use_bidirectional_attention: vision` in its config), and vLLM only
+supports that on FlashAttention 4 or Triton. `--language-model-only` turns image
+input off, and that is what makes FLASH_ATTN eligible. Setting only
+`VLLM_ATTN_BACKEND` fails the boot with *"mm_prefix (PrefixLM bidirectional
+attention) requires FlashAttention v4"* (read from the source, not boot-tested).
+
+**How it works.** The only thing in the way is the head-size gate: vLLM accepts
+head sizes above 256 for FLASH_ATTN only with FA4. `head512_plugin/` is a vLLM
+general plugin that makes it accept exactly 512 on XPU. Compose mounts it at
+`/opt/vllm-plugins` and puts that on `PYTHONPATH`, so every vLLM process loads
+it and logs `xpu_head512: FLASH_ATTN on XPU now accepts head size 512`. It
+changes nothing else: with the switch off, gemma-4 still gets Triton, and
+gpt-oss's head size is 64. FLASH_ATTN on XPU uses 64-token KV blocks, which is
+the block size the head-512 decode kernel is built for.
+
+**Measured** on the B70 on 2026-09-30. Both columns use the same checkpoint, the
+131,072 context cap, the 10.5 GiB KV pin and the same scripts, with true token
+counts:
+
+| | Triton (switch off) | Intel attention |
+|---|---|---|
+| decode, 512 tokens, thinking off / on | 73.7–74.3 / 74.4–74.5 tok/s | **85.7–86.3 / 86.5–86.7 tok/s** |
+| cold prefill, ~11.8k tokens | 27.7 s | **1.7 s** |
+| cold prefill, ~24.2k tokens | 116.6 s | **4.2 s** |
+| 16,049-token prompt: first token | 51.1 s | **2.5 s** |
+| 16,049-token prompt: decode after it | 38.1 tok/s | **74.8 tok/s** |
+| KV pool | 376,999 tokens (2.88×) | 394,408 tokens (3.01×) |
+| image input | yes | no |
+
+Longer prompts, measured with Intel attention only: 67,956 tokens in 17.8 s and
+129,331 tokens in 51.7 s. For scale, Triton took about 13 minutes for a
+60,924-token prompt on the same card (one run, with a second request
+overlapping).
+
+The answers held up. The fixed questions got the same answers at temperature 0,
+and `smoke.sh` passed with thinking on and off. A code hidden in documents of
+11,991, 67,956 and 129,331 tokens (5–50% of the way in) was found every time.
+That code sits far outside the 1024-token sliding window, so only the head-512
+layers can retrieve it.
+
+**After an image upgrade, check the boot log before trusting it:**
+
+- `xpu_head512: FLASH_ATTN on XPU now accepts head size 512` means the plugin
+  loaded;
+- `Using Flash Attention backend.` and `Setting kv cache block size to 64` mean
+  it took effect;
+- there must be no `[vllm_xpu_kernels] XPU kernel not compiled … falling back to
+  PyTorch reference attention`. Intel's wrapper silently switches to a slow
+  reference path when a kernel variant is missing, and that line is the only
+  sign.
+
+If vLLM starts asking the XPU kernels what they support, the plugin does nothing
+and can be deleted.
 
 ### Prefix caching is what makes this usable
 
@@ -653,8 +725,8 @@ Same prompt sent twice on a virgin engine:
 | 9,643 | 26.3 s | 0.31 s | **84×** |
 | 31,957 | 305.3 s | 0.63 s | **481×** |
 
-Warm time stays roughly flat while cold grows quadratically, so the ratio climbs
-with prompt size. This also **refutes** a plausible worry: sliding-window layers
+These are Triton numbers. Warm time stays roughly flat while cold grows
+quadratically, so the ratio climbs with prompt size. This also **refutes** a plausible worry: sliding-window layers
 free their out-of-window blocks mid-request (`remove_skipped_blocks`), which
 looked like it should defeat reuse on long prompts. It doesn't.
 
@@ -669,8 +741,11 @@ Two practical consequences:
   *after* a varying question caches nothing, because matching runs from token 0.
 - **Growing a conversation costs the same total as one big prefill** — it's the
   same triangle either way. What changes is that it's spread out, so per-turn
-  latency creeps up: a ~2k-token turn costs ~40 s at 32k of context and ~2.2 min
-  at 100k.
+  latency creeps up: on Triton a ~2k-token turn costs ~40 s at 32k of context and
+  ~2.2 min at 100k.
+
+With Intel attention a cold prompt is 16–28× cheaper, so the cache matters much
+less, though it still works the same way.
 
 ---
 
@@ -721,8 +796,9 @@ earlier "no-op" result was an artifact of only ever testing it under eager.
 
 **Compiled mode does not help prefill** (2.28 / 5.56 / 19.77 s at 2.4k / 4.8k /
 9.6k tokens, vs eager's 2.15 / 5.61 / 19.38). That confirms the quadratic prefill
-is the forced Triton attention backend, not kernel-launch overhead, and so isn't
-fixable from configuration.
+is the forced Triton attention backend, not kernel-launch overhead. No compile or
+batching setting fixes it; changing the attention backend does (*Intel attention
+for gemma-4*).
 
 ### Why gemma-4 is slower than gpt-oss
 
@@ -736,7 +812,7 @@ granularity:
 | experts activated / layer | 8 of 128 | 4 of 32 |
 | expert intermediate size | 704 | 2880 |
 | expert GEMVs per token | **240** | 96 |
-| attention backend | TRITON_ATTN (forced) | FLASH_ATTN |
+| attention backend | TRITON_ATTN (forced), or FLASH_ATTN with the Intel-attention switch | FLASH_ATTN |
 | expert kernel | generic `XPUExpertsWNA16` | `XPUExpertsMxFp4` (tuned) |
 
 2.5× as many expert matrix multiplies per token, each ~4.1× narrower. Small
@@ -1003,7 +1079,11 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 | Trace returned but no answer | Reasoning consumed the whole `max_tokens`. Raise it — and note a hard prompt can burn 6,000 tokens without closing the trace |
 | OOM at boot | KV pin from the other model; `VLLM_KV_CACHE_MEMORY` is absolute and OOMs rather than shrinking |
 | `400` on long prompts | Above the cap. Both blocks now run 131,072; the ceiling is 162,496 and costs no VRAM |
-| A big prompt seems to hang | Not hung — quadratic prefill. 9.6k ≈ 26 s, 32k ≈ 5 min, 64.7k ≈ 22 min. Raise your client timeout |
+| A big prompt seems to hang | Not hung — quadratic prefill on Triton. 9.6k ≈ 26 s, 32k ≈ 5 min, 64.7k ≈ 22 min (B60). Raise your client timeout, or switch on Intel attention if you can do without images |
+| Boot fails: `mm_prefix … requires FlashAttention v4` | `VLLM_ATTN_BACKEND=FLASH_ATTN` without `VLLM_TEXT_ONLY_FLAG=--language-model-only`. Set both or neither |
+| Boot fails with FLASH_ATTN refusing head size 512 | The plugin didn't load. Check the `head512_plugin` mount and `PYTHONPATH` in `compose.yaml`, and look for `xpu_head512` in the log |
+| `400 At most 0 image(s) may be provided in one prompt` | Intel attention is on, which means text-only. Comment out both switch lines and `up -d` to get images back |
+| Much slower than *Intel attention for gemma-4* says, after an image upgrade | Look for `XPU kernel not compiled … falling back` in the log: a kernel variant is missing from the new image |
 | Context ceiling dropped after a tuning change | You raised `--max-num-batched-tokens`; it inflates the sliding-window reservation |
 | Boot segfaults in `getSortedImages` | `SYCL_CACHE_PERSISTENT=1` with the V2 runner. Must stay `0` |
 | `metrics` is `null` or missing | Engine not recreated since the flag was added; the stream didn't send `stream_options.include_usage`; the request went through a gateway that drops it (see *What the clients do with it*); `n` > 1 or a `/v1/completions` call with a list of prompts; or the endpoint is `/v1/responses` or `/v1/messages`. Only `mean_itl_ms` `null` just means one token came back |
@@ -1016,9 +1096,10 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 
 1. A genuine **concurrent-load** test — every concurrency figure here is
    *allocated* capacity; `bench.sh` is single-stream.
-2. A true **~131k prompt** has never completed end-to-end. The cap is
-   boot-verified and exercised to ~64.7k; everything above that is the fitted
-   curve, not measurement.
+2. On Triton, a true **~131k prompt** has never completed end-to-end. The cap
+   is boot-verified and exercised to ~64.7k; everything above that is the
+   fitted curve, not measurement. With Intel attention, a 129,331-token prompt
+   completed in 51.7 s.
 3. **fp8 KV cache, untested.** `TritonAttentionBackend.supported_kv_cache_dtypes`
    includes `fp8`, and the SM89 guard that would reject it sits inside
    `if current_platform.is_cuda():` — **not gated on XPU**. It would halve both KV
@@ -1031,10 +1112,16 @@ port 8000, and if it's under a process supervisor it will come back by itself.
    context cap down to ~96k or below to make VRAM room, and its CUDA-graph path
    won't apply here.
 5. **File the V2 segfault upstream** — clean repro, no existing issue.
-6. **The head-512 capability gate** is arguably also worth reporting: the kernel
-   is compiled and unreachable. See *Why the slow kernel gets chosen*.
-7. Whether `/dev/dri/by-path` is still needed at world_size=1.
-8. The stock `intel/vllm:0.21.0` baseline in `vllm_xpu/`, still unmeasured.
+6. **The head-512 capability gate** is worth reporting: the kernel is compiled,
+   and only `head512_plugin/` makes it reachable. A fix upstream would let the
+   plugin go. See *Why the slow kernel gets chosen*.
+7. **Image input with Intel attention.** It needs bidirectional attention over
+   image tokens, which neither Intel's kernel nor vLLM's XPU FLASH_ATTN path
+   provides yet.
+8. **Concurrent load with Intel attention**, untested. Every figure in its table
+   is a single stream.
+9. Whether `/dev/dri/by-path` is still needed at world_size=1.
+10. The stock `intel/vllm:0.21.0` baseline in `vllm_xpu/`, still unmeasured.
 
 ---
 
