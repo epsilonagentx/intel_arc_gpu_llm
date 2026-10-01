@@ -1,0 +1,2 @@
+[vllm.general_plugins]
+xpu_head512 = vllm_xpu_head512:register

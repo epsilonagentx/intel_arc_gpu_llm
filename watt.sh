@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Live GPU power for the Intel Arc Pro B60 (xe driver), read straight from the
-# hwmon energy counters. No root, no extra packages — pure sysfs.
+# Live GPU power for an Intel Arc Pro B60 or B70 (xe driver), read straight
+# from the hwmon energy counters. No root, no extra packages — pure sysfs.
 #
 #   ./watt.sh            # sample every 1s
 #   ./watt.sh 2          # sample every 2s

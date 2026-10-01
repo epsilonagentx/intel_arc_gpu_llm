@@ -14,13 +14,16 @@ How this file differs from the other docs:
 
 | Doc | What it covers |
 |-----|----------------|
-| [README.md](../README.md) | operator | How do I run, swap, and verify the stack? |
-| [DEVELOPER.md](../DEVELOPER.md) | developer | How is it put together, and why these values? |
-| **scaler/README.md** (this file) | whoever changes a scaler flag | What has already been tried, measured, and ruled out? |
+| [README.md](../README.md) | How do I run, swap, and verify the stack? |
+| [DEVELOPER.md](../DEVELOPER.md) | How is it put together, and why these values? |
+| [INTEL_ARC_B60.md](../INTEL_ARC_B60.md), [INTEL_ARC_B70.md](../INTEL_ARC_B70.md) | What differs between the two cards |
+| **scaler/README.md** (this file) | What has already been tried, measured, and ruled out on this engine? |
 
 Read this before "improving" a flag — most of the obvious ideas have been tested
 on real hardware and rejected for recorded reasons. All measurements are on a
-single **Intel Arc Pro B60 (24 GB)** serving `gpt-oss-20b` unless stated.
+single **Intel Arc Pro B60 (24 GB)** serving `gpt-oss-20b` unless stated. The one
+exception so far is Qwen3.8-27B, measured on the B70; see *Models, and how to
+swap one*.
 
 **Two conventions in this file:**
 
@@ -120,10 +123,9 @@ So a swap is an edit to that file, then:
 docker compose up -d vllm-scaler
 ```
 
-No `--force-recreate` needed, unlike the `.env`-wired engines: editing
-`compose.yaml` changes the service's config hash, so Compose recreates the
-container by itself. That also means there is no way to "forget" to recreate
-here — the failure mode the other two have doesn't exist.
+No `--force-recreate` needed: editing `compose.yaml` changes the service's
+config hash, so Compose recreates the container by itself. The `.env`-wired
+engines work the same way, since their `.env` values are part of that hash.
 
 There is no `.env.example` in this folder on purpose. These flags are not
 independent of one another, and three of them will break the engine or silently
@@ -140,6 +142,15 @@ corrupt its output if carried across to a different model:
 calls, not an error. Re-run `./smoke.sh` after any model change — that is what it
 is for.
 
+`compose.yaml` also carries a second, commented-out `command:` for
+**Qwen3.8-27B**: the official BF16 checkpoint, quantized to int4 as it loads
+(`--quantization sym_int4`), at 98,304 tokens of context and util 0.90. It was
+measured on the B70, not the B60: 17.83 GiB of weights, 28.7 tok/s, `smoke.sh`
+ALL PASS. The details, including why 128k didn't fit, are in
+[INTEL_ARC_B70.md](../INTEL_ARC_B70.md). To switch, comment one `command:` block
+out and the other in. The served name changes to `qwen3.8-27b`, so clients asking
+for `gpt-oss-20b` stop working until you switch back.
+
 ### What this image can serve that the stock one cannot
 
 The `llm-scaler` fork carries Arc B-series tuning plus quantized-MoE paths the
@@ -150,10 +161,11 @@ this file's first convention it is **linked, never copied**, so it cannot go
 stale here:
 [supported models §3](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/vllm/README.md#3-supported-models).
 
-Sizing is the real constraint rather than support: the card holds ~22.7 GiB, and
-most 27–30B int4 candidates land at 14–17 GiB of weights with several times
-gpt-oss's per-token KV cost, which trades 128k of context down to roughly 20–32k.
-Check both axes before believing a model "fits".
+Sizing is the real constraint rather than support. Most 27–30B int4 candidates
+land at 14–17 GiB of weights with several times gpt-oss's per-token KV cost. On a
+B60, which holds ~22.7 GiB, that trades 128k of context down to roughly 20–32k;
+a B70 holds about 30 GiB, which is how Qwen3.8-27B got 98,304. Check both axes
+before believing a model "fits".
 
 ### One model to not re-try here
 
@@ -360,14 +372,16 @@ Four things worth knowing before touching this flag:
    gpu_memory_utilization config."* The util flag is kept in the compose file
    only as the fallback if the byte value is ever removed.
 3. **The value is absolute, not proportional, so it does not self-adjust.** It
-   assumes the 22.99 GiB free at startup that this host currently has (the B60
-   drives no displays). If anything else ever claims VRAM on this card, the
+   assumes the 22.99 GiB free at startup on the B60 it was measured on, with no
+   displays attached. A B70 needs its own value, which hasn't been derived for
+   gpt-oss yet ([INTEL_ARC_B70.md](../INTEL_ARC_B70.md)). If anything else ever
+   claims VRAM on the card, the
    boot OOMs instead of quietly shrinking the pool — that is the trade for the
    extra 3.7 GiB, and the log says as much: *"If OOM'ed, check the difference
    of initial free memory between the current run and the previous run."*
 4. **Profiling is skipped, so the engine no longer prints an advised value.**
-   To re-derive the number after an image bump, comment the flag out for one
-   boot, read `gpu_worker.py:857`, then put it back.
+   To re-derive the number after an image bump or on another card, comment the
+   flag out for one boot, read `gpu_worker.py:857`, then put it back.
 
 `GET /metrics` does **not** expose pool size on this build (only
 `kv_cache_usage_perc`), so those figures always need a boot-log read — run this

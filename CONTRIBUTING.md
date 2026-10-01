@@ -1,7 +1,7 @@
   # Contributing
 
   Thanks for your interest! This is a small, opinionated stack for running a local
-  LLM on an Intel Arc Pro B60 (vLLM on the `xe` GPU driver). Bug reports, doc fixes,
+  LLM on an Intel Arc Pro B60 or B70 (vLLM on the `xe` GPU driver). Bug reports, doc fixes,
   and config improvements are all welcome.
 
   ## License
@@ -38,8 +38,9 @@
 
   - Match the style of the file you're editing.
   - Each doc has one job — put content where it belongs:
-    `README.md` (operator how-to), `DEVELOPER.md` (the *why*),
-    `INTEL_ARC_B60.md` (current state).
+    `README.md` (how to run the stack), `DEVELOPER.md` (the *why*),
+    `INTEL_ARC_B60.md` and `INTEL_ARC_B70.md` (what differs per card), and
+    each engine folder's `README.md` (that engine).
   - Shell scripts: keep them dependency-light.
 
   ## Before opening a PR
