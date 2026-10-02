@@ -149,7 +149,9 @@ measured on the B70, not the B60: 17.83 GiB of weights, 28.7 tok/s, `smoke.sh`
 ALL PASS. The details, including why 128k didn't fit, are in
 [INTEL_ARC_B70.md](../INTEL_ARC_B70.md). To switch, comment one `command:` block
 out and the other in. The served name changes to `qwen3.8-27b`, so clients asking
-for `gpt-oss-20b` stop working until you switch back.
+for `gpt-oss-20b` stop working until you switch back. The upstream engine runs
+the same model faster, with the full 131,072 context; see
+[vllm_openai_xpu/README.md](../vllm_openai_xpu/README.md#qwen38-27b).
 
 ### What this image can serve that the stock one cannot
 
