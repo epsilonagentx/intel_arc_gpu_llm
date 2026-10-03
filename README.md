@@ -171,7 +171,7 @@ switch between the base and scaler engines.
 
 ```bash
 ./smoke.sh                                          # localhost:8000, model gpt-oss-20b
-MODEL=qwen3-32b ./smoke.sh                          # after a model swap
+MODEL=my-model ./smoke.sh                          # after a model swap
 VLLM_ENDPOINT=http://192.168.x.x:8000 ./smoke.sh    # remote target
 ```
 
