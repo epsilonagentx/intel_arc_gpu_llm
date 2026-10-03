@@ -944,6 +944,7 @@ within noise:
 | **MTP, 3 drafts, FP8 output layer** | **58.9, 53.1, 60.3** | **67.3, 64.8, 65.3** |
 | MTP, 2 drafts, 16-bit output layer | 49.1 | 53.6 |
 | MTP, 4 drafts, 16-bit output layer | 46.6 | 54.0 |
+| MTP, 3 drafts, FP8 output layer, int4 draft head (`--mtp-int4`) | 60.8, 63.3 | 67.6, 68.1 |
 
 - Speed depends on the text: code is easiest to guess (up to 80 tok/s),
   free prose the hardest (around 50).
@@ -952,6 +953,16 @@ within noise:
 - 14 of 14 greedy answers (10 arithmetic, 4 open questions) came out
   byte-identical with the FP8 and the 16-bit output layer. `smoke.sh` passes,
   image input still works, and the prefix cache still hits on follow-up turns.
+
+**Optional: the draft head at int4.** `--mtp-int4` also packs the draft
+head's seven linear layers to int4, in the checkpoint's own format and group
+size, and the copy lands in `Qwen3.8-27B-INT4-fp8head-int4mtp` instead. The
+head shrinks from 0.79 to 0.20 GiB and greedy decode gains about 3%, less
+than its size suggests: the draft steps are small, so fixed overhead per
+step matters more there than bytes. The main model still checks every draft,
+so answers stay the same, except that a near-tie between two words can tip
+the other way: 13 of 14 probe answers were identical, and the fourteenth was
+reworded halfway, still correct.
 
 Compose doesn't pin a revision, so a new upload to that repo loads on the next
 boot. The measured one is `91bd022d5b49442a868bc35008f6c21e1860edfa`.
