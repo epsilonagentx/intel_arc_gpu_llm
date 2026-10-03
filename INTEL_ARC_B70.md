@@ -41,6 +41,7 @@ engine templates is the same on both cards.
 | Engine | Model | Context | KV memory | Mode |
 |---|---|---|---|---|
 | `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | 131,072 | `VLLM_KV_CACHE_MEMORY=11274289152` (10.5 GiB) | compiled |
+| `vllm_openai_xpu/` | Qwen3.8-27B, `RedHatAI/Qwen3.8-27B-INT4` | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `scaler/` | Qwen3.8-27B, int4 at load | 98,304 | `--gpu-memory-utilization 0.90`, no byte value | eager |
 | `vllm_openai_xpu/` | gpt-oss-20b | — | not measured | — |
 | `scaler/` | gpt-oss-20b | — | not measured | — |
@@ -63,8 +64,11 @@ same settings, `adeepv` decoded at 74.3–74.9 tok/s and `reinforce20001` at
 against 16.82 GiB), which leaves more room for the KV cache:
 `reinforce20001` got 341,080 tokens (2.60×) from a 9.5 GiB setting.
 
-**Qwen3.8-27B needs util 0.90.** At 128k it needs 8.09 GiB of KV cache, util
-0.80 left only 4.13 GiB, and that boot failed. 98,304 tokens fits.
+**Qwen3.8-27B on the scaler needs util 0.90.** At 128k it needs 8.09 GiB of KV
+cache, util 0.80 left only 4.13 GiB, and that boot failed. 98,304 tokens fits.
+On the upstream engine the 8.0 GiB value gives a full 131,072. It's the
+gpt-oss B60 value reused. The boot log suggests about 4 GiB is still free, so
+a larger value would probably fit (inferred, not tried).
 
 ## Measured: gemma-4 on the upstream engine
 
@@ -108,6 +112,28 @@ log says 2.88×. See
 attention the GPU was 99–100% busy (watched with `sudo nvtop`), so there are no
 kernel-launch gaps for graphs to remove. Leave `VLLM_XPU_ENABLE_XPU_GRAPH` off.
 
+## Measured: Qwen3.8-27B on the upstream engine
+
+`vllm/vllm-openai-xpu:v0.30.0`, `RedHatAI/Qwen3.8-27B-INT4`, 131,072 context,
+the 8.0 GiB setting, compiled mode, true token counts, thinking off
+(2026-10-02):
+
+| | Triton | Intel attention |
+|---|---|---|
+| weights on the card | 17.56 GiB | 17.56 GiB |
+| KV pool | 244,270 tokens (1.86×) | 244,270 tokens (1.86×) |
+| decode, 512 tokens | 29.7 tok/s | **32.9 tok/s** |
+| 9,411-token prompt: first token | 73.6 s | **5.9 s** |
+| 18,786-token prompt: first token | 283.0 s | **12.8 s** |
+| 18,786-token prompt: decode after it | 5.3 tok/s | **30.2 tok/s** |
+| image input | works | works |
+| `smoke.sh` | ALL PASS | ALL PASS |
+
+Intel attention is about 11% faster at decode than Triton, and about 15% faster
+than the scaler below. It also fits the full 131,072 context where the scaler
+fits 98,304. How to run it is in
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#qwen38-27b).
+
 ## Measured: Qwen3.8-27B on the scaler
 
 `intel/llm-scaler-vllm:0.26.0-b2`, the official BF16 checkpoint quantized to
@@ -134,14 +160,15 @@ A model is listed once it has actually booted and served requests on this card.
 |---|---|---|---|---|---|---|
 | gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | `vllm_openai_xpu` | 131,072 | 74 tok/s on Triton, 86 with Intel attention |
 | gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | int4 W4A16, group-32 | 16.82 GiB | `vllm_openai_xpu` | 131,072 | 68.4–69.9 tok/s on Triton |
+| Qwen3.8-27B | `RedHatAI/Qwen3.8-27B-INT4` | int4 W4A16, group-128 | 17.56 GiB | `vllm_openai_xpu` | 131,072 | 32.9 tok/s with Intel attention, 29.7 on Triton |
 | Qwen3.8-27B | `Qwen/Qwen3.8-27B` | int4 at load (`sym_int4`) | 17.83 GiB | `scaler` | 98,304 | 28.7 tok/s |
 
 ## Not measured yet
 
 - gpt-oss-20b on any of the three engines, and so a B70 KV value for it.
 - The stock `vllm_xpu/` engine at all.
-- More than one request at a time on gemma-4. Every figure above is a single
-  request.
+- More than one request at a time on gemma-4 or Qwen3.8. Every figure above is
+  a single request.
 - Power while decoding with Intel attention.
 - Models that fit 32 GB but not 24 GB, such as Qwen3.5/3.6-35B-A3B in AWQ
   (about 24 GB of weights). None has been tried.

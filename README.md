@@ -113,9 +113,10 @@ byte value); all of them, with the measurement log, are in
 
 `vllm_openai_xpu/` runs upstream's own image and is what's live today. It is
 several vLLM minors newer than the others and the only engine here whose kernels
-load gemma-4. Its guide covers both models it's validated for, and gemma-4's
-prefill trade-off: quadratic on the default Triton backend, and 16–28× faster
-with the Intel-attention switch, which costs image input —
+load gemma-4. Its guide covers the three models it's validated for (gemma-4,
+Qwen3.8-27B and gpt-oss-20b), and gemma-4's prefill trade-off: quadratic on the
+default Triton backend, and 16–28× faster with the Intel-attention switch, which
+costs image input —
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md).
 
 **Benchmark before adopting any of them.** The win has to be measured on your own
@@ -170,7 +171,7 @@ switch between the base and scaler engines.
 
 ```bash
 ./smoke.sh                                          # localhost:8000, model gpt-oss-20b
-MODEL=qwen3-32b ./smoke.sh                          # after a model swap
+MODEL=my-model ./smoke.sh                          # after a model swap
 VLLM_ENDPOINT=http://192.168.x.x:8000 ./smoke.sh    # remote target
 ```
 
@@ -273,17 +274,20 @@ firewall (firewalld, nftables, iptables) does the same job:
 
 ## Volumes
 
-Host path: `/var/lib/docker/volumes/llm_<name>/_data`
-
 | Volume | Contents | Notes |
 |--------|----------|-------|
-| `hf-cache` | HF model weights | Survives compose changes; **shared by all three engines** (no re-download when you swap) |
+| `hf-cache` | HF model weights | Survives compose changes; **shared by all three engines** (no re-download when you swap). Can be a host folder instead, see below |
 | `vllm-cache` | torch.compile + AOT artifacts (`vllm_xpu/`, the stock engine) | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
 | `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`scaler/compose.yaml`) first boots. Stays near-empty — that engine runs `--enforce-eager`, so nothing is compiled, and it needs no clearing on an image bump |
 | `vllm-openai-cache` | upstream engine compile cache | Own volume again (kernels are image-specific). This engine runs **compiled**, so unlike the scaler's it does fill — clear it once after an image bump, per [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md) |
 
-Open WebUI's data lives in its own project, so its volume is
-`open-webui_open-webui-data` (not `llm_*`) — see *Running Open WebUI (optional)*.
+**The models can live in any host folder**, e.g. `~/models/hf`. Set `HF_CACHE`
+to its absolute path in each engine's `.env`; the same value everywhere keeps
+one shared copy.
+
+**The engines don't need root.** They reach the GPU through the host's `render`
+and `video` groups, which `group_add` already passes in. Set `VLLM_USER` to your
+`id -u`:`id -g`, e.g. `1000:1000`, so the files they write are yours.
 
 ---
 

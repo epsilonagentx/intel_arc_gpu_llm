@@ -7,7 +7,7 @@
 # Usage:
 #   ./smoke.sh                                   # localhost:8000, model gpt-oss-20b
 #   VLLM_ENDPOINT=http://192.168.x.x:8000 ./smoke.sh
-#   MODEL=qwen3-32b ./smoke.sh                   # after a model swap
+#   MODEL=my-model ./smoke.sh                   # after a model swap
 #   THINKING=1 ./smoke.sh                        # force reasoning ON
 #   THINKING=0 ./smoke.sh                        # assert reasoning can be turned OFF
 #

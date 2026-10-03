@@ -42,13 +42,10 @@ engine templates is the same on both cards.
 | Engine | Model | Context | KV memory or utilization | Mode |
 |---|---|---|---|---|
 | `vllm_xpu/` | gpt-oss-20b | 131,072 | util 0.80; 0.86 filled the card and is the OOM edge | compiled |
-| `vllm_xpu/` | Qwen3-32B-AWQ ¹ | 7,168 | util 0.9 | compiled |
 | `scaler/` | gpt-oss-20b | 131,072 | `--kv-cache-memory-bytes 8647520256` (8.05 GiB) | eager, mandatory |
 | `vllm_openai_xpu/` | gpt-oss-20b | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | eager, needed with this value |
 | `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | 131,072 | `VLLM_KV_CACHE_MEMORY=4563402752` (4.25 GiB) | compiled |
 | `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | 45,056 | `VLLM_KV_CACHE_MEMORY=5637144576` (5.25 GiB) | compiled |
-
-¹ On the older `intel/vllm:0.17.0-xpu` image, and not re-run since.
 
 **The two gemma-4 rows.** 131,072 was boot-tested with `reinforce20001` at
 4.25 GiB. `adeepv` is about 1.2 GiB lighter, so it got 5.25 GiB, but it only ran
@@ -100,13 +97,10 @@ count. The numbers are the ones measured at the time.
 | gpt-oss-20b | `openai/gpt-oss-20b` | MXFP4 (native) | 12.87 GiB | •&nbsp;`vllm_xpu`<br>•&nbsp;`scaler`<br>•&nbsp;`vllm_openai_xpu` | 131,072 | • `scaler`: 85.6 tok/s ¹<br>• `vllm_openai_xpu`: 83.1 tok/s ¹ |
 | gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | int4 W4A16, group-32 | 16.93 GiB | •&nbsp;`vllm_openai_xpu` | 131,072 | 56.2 tok/s |
 | gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | •&nbsp;`vllm_openai_xpu` | 45,056 | 56.5 tok/s |
-| Qwen3-32B-AWQ | `Qwen/Qwen3-32B-AWQ` | AWQ int4 | 18.14 GiB | •&nbsp;`vllm_xpu` ² | 7,168 | not recorded |
 
 ¹ `bench.sh` counts streamed chunks, so both gpt-oss figures slightly
 understate the true token rate. The gemma-4 figures are true tokens from the
 usage chunk.
-² Measured on the predecessor image, `intel/vllm:0.17.0-xpu`, and not re-run
-since. Treat it as historical until it's booted on the current image.
 
 ## What doesn't fit
 
