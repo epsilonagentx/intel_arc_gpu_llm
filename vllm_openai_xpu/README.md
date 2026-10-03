@@ -4,10 +4,10 @@ This folder runs **upstream's own** XPU image, `vllm/vllm-openai-xpu`, rather th
 Intel's fork used by `scaler/`. It serves the same OpenAI-compatible API on the
 same port, so it's a drop-in replacement for the other two engines here.
 
-It's configured for **two validated models** — `gemma-4-26B-A4B-it` and
-`gpt-oss-20b` — and switching between them is a `.env` edit plus a recreate.
-It is also the only engine in this repo that can load gemma-4, which is why it's
-the one currently serving.
+It's configured for **three validated models**: `gemma-4-26B-A4B-it`,
+`Qwen3.8-27B` and `gpt-oss-20b`. Switching between them is a `.env` edit plus a
+recreate. It is also the only engine in this repo that can load gemma-4, which
+is why it's the one currently serving.
 
 Most measurements below were taken on an Arc Pro B60 (24 GB), and the ones from
 the B70 say so. The Arc Pro B70 replaced the B60 on 2026-09-26 and runs gemma-4
@@ -48,7 +48,7 @@ same engine on the B60: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928
 
 - [Quick start](#quick-start)
 - [Configuration — `.env`](#configuration--env)
-- [The two models](#the-two-models)
+- [The models](#the-models)
 - [Switching models](#switching-models)
 - [Verifying which model is live](#verifying-which-model-is-live)
 - [Reasoning / thinking](#reasoning--thinking)
@@ -57,6 +57,7 @@ same engine on the B60: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928
 - [Downstream consumers](#downstream-consumers)
 - [Per-request stats — TTFT and tok/s](#per-request-stats--ttft-and-toks)
 - [gemma-4 in depth](#gemma-4-in-depth) — checkpoint, context, prefill, Intel attention, prefix cache
+- [Qwen3.8-27B](#qwen38-27b) — checkpoint, Intel attention with images, measured against Triton
 - [Performance](#performance)
 - [Why it is configured this way](#why-it-is-configured-this-way)
 - [Shared project and volumes](#shared-project-and-volumes)
@@ -86,8 +87,8 @@ ready, so trust `smoke.sh` over the first `200`.
 
 A plain `docker compose up -d` applies it. Compose keeps a hash of each
 container's settings, with the `.env` values already filled in, and recreates the
-container whenever that hash changes. Switching between the gemma-4 and gpt-oss
-blocks, a shell override, or changing `VLLM_KV_CACHE_MEMORY` by a single byte all
+container whenever that hash changes. Switching between model blocks, a shell
+override, or changing `VLLM_KV_CACHE_MEMORY` by a single byte all
 produce a new hash (checked on Compose v5.5.1 with `docker compose config --hash`
 and `up -d --dry-run`). Running from the repo root with
 `-f vllm_openai_xpu/compose.yaml` reads the same `.env`.
@@ -113,8 +114,8 @@ is never edited to change models. Copy the template and edit:
 `.env` is gitignored; `.env.example` is tracked and documents every variable with
 its compose default and the measured consequence of changing it.
 
-These are all **model-specific** — every one differs between the two models, so
-they move as a set. `!` marks the three whose wrong value breaks a boot or
+These are all **model-specific**, so they move as a set, and each block in
+`.env.example` sets every one of them. `!` marks the three whose wrong value breaks a boot or
 silently degrades it.
 
 | Variable | What it sets |
@@ -125,9 +126,9 @@ silently degrades it.
 | `VLLM_TOOL_CALL_PARSER` | Model-family specific, same quiet failure mode |
 | `VLLM_MAX_MODEL_LEN` **!** | Context window; must fit VRAM after weights |
 | `VLLM_KV_CACHE_MEMORY` **!** | KV pool in **absolute bytes**; overrides util, skips profiling, and OOMs rather than shrinking |
-| `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required by gpt-oss's 8.0 GiB B60 pin) or `--no-enforce-eager` (gemma-4, measured fine at 131,072). Passed whole — `--enforce-eager=False` does not parse |
-| `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. Unset in the template, so gemma-4 reasoning is opt-in; `{"enable_thinking":true}` turns it on for every request |
-| `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` puts gemma-4 on Intel's kernel. Set it together with the next one — see *Intel attention for gemma-4* |
+| `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required by gpt-oss's 8.0 GiB B60 pin) or `--no-enforce-eager` (gemma-4 and Qwen3.8, measured fine at 131,072). Passed whole — `--enforce-eager=False` does not parse |
+| `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. The gemma-4 block sets `{"enable_thinking":true}`, which turns reasoning on for every request; `null` leaves it to each request. Qwen3.8 thinks by default without it |
+| `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` asks for Intel's kernel. gemma-4 needs the next variable with it — see *Intel attention for gemma-4*. Qwen3.8 doesn't |
 | `VLLM_TEXT_ONLY_FLAG` | `--no-language-model-only` (default) or `--language-model-only`, which turns image input off. Passed whole, like `VLLM_EAGER_FLAG` |
 
 Shell variables beat `.env`, but **only for the names you pass** — so the
@@ -142,15 +143,17 @@ just `VLLM_MODEL`.
 
 ---
 
-## The two models
+## The models
 
-| | gpt-oss-20b | gemma-4-26B-A4B-it (int4) |
-|---|---|---|
-| weights on device | 12.87 GiB | 15.76 GiB (`adeepv`) |
-| max context | 131,072 | 131,072 (ceiling 162,496 on the B60's 4.25 GiB pin) |
-| reasoning | always on, no off switch | opt-in per request |
-| large cold prompts | linear, fine | **quadratic on Triton — see warning**; fast with Intel attention |
-| image input | no | yes, unless Intel attention is on |
+| | gpt-oss-20b | gemma-4-26B-A4B-it (int4) | Qwen3.8-27B (int4) |
+|---|---|---|---|
+| type | MoE | MoE | dense, with linear-attention layers |
+| weights on device | 12.87 GiB | 15.76 GiB (`adeepv`) | 17.56 GiB |
+| max context | 131,072 | 131,072 (ceiling 162,496 on the B60's 4.25 GiB pin) | 131,072 (B70) |
+| reasoning | always on, no off switch | opt-in per request | on by default, a request can turn it off |
+| large cold prompts | linear, fine | **quadratic on Triton — see warning**; fast with Intel attention | fast with Intel attention, slow on Triton |
+| image input | no | yes, unless Intel attention is on | yes, also with Intel attention |
+| decode on the B70 | not measured | 86 tok/s with Intel attention | 32.9 tok/s with Intel attention |
 
 Speed, first-token time and KV pool depend on the card, so they're in the card
 files: [B60](../INTEL_ARC_B60.md#measured-results) and
@@ -162,6 +165,8 @@ gpt-oss-20b's prefill stays linear, which made it the better choice for
 coding-CLI traffic through a gateway while gemma-4 ran on Triton. gemma-4 is the
 newer and stronger model and is vision-capable; with Intel attention switched on
 it reads a 24k-token prompt in 4.2 s on the B70, at the cost of image input.
+Qwen3.8-27B is a dense model, so it decodes at well under half gemma-4's rate,
+but it keeps image input on Intel attention — see [*Qwen3.8-27B*](#qwen38-27b).
 
 > ⚠ **`bench.sh` under-reports gemma-4 by ~15%, and the reason matters.** It
 > counts SSE *chunks*, and with reasoning on the reasoning channel packs **1.15
@@ -198,13 +203,34 @@ VLLM_MAX_MODEL_LEN=131072 \
 VLLM_KV_CACHE_MEMORY=8603448832 \
 VLLM_EAGER_FLAG=--enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
+VLLM_ATTN_BACKEND=auto \
+VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
+docker compose up -d
+```
+
+The same for Qwen3.8-27B, with the B70's KV value:
+
+```bash
+cd vllm_openai_xpu
+docker compose down
+
+VLLM_MODEL=RedHatAI/Qwen3.8-27B-INT4 \
+VLLM_SERVED_MODEL_NAME=qwen3.8-27b \
+VLLM_REASONING_PARSER=qwen3 \
+VLLM_TOOL_CALL_PARSER=qwen3_coder \
+VLLM_MAX_MODEL_LEN=131072 \
+VLLM_KV_CACHE_MEMORY=8603448832 \
+VLLM_EAGER_FLAG=--no-enforce-eager \
+VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
+VLLM_ATTN_BACKEND=FLASH_ATTN \
+VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
 docker compose up -d
 ```
 
 Confirm it took over before trusting it:
 
 ```bash
-cd .. && ./smoke.sh          # should report gpt-oss-20b -> openai/gpt-oss-20b
+cd .. && ./smoke.sh          # should report the new id -> its checkpoint
 ```
 
 The KV value in that block is the B60's. gpt-oss hasn't been measured on the B70
@@ -218,9 +244,9 @@ On the B60, two of those are **not optional**, and they fail differently:
 | `VLLM_KV_CACHE_MEMORY` | boots, but the 4.25 GiB pin strands ~4 GiB and roughly halves the pool |
 | `VLLM_EAGER_FLAG` | **boot fails** — compiled mode with gpt-oss's 8.0 GiB pin starves the KV pool, which is the case `--enforce-eager` exists for |
 
-Both models now run at `131,072`, so `VLLM_MAX_MODEL_LEN` no longer differs
-between the blocks — but keep it in the block anyway, since the two are free to
-diverge again. `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null` is tidiness only; an
+Every model runs at `131,072`, so `VLLM_MAX_MODEL_LEN` doesn't differ between
+the blocks today — but keep it in each block anyway, so they are free to
+diverge. `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null` is tidiness only; an
 unknown template kwarg is verified harmless on gpt-oss, which always reasons
 regardless.
 
@@ -245,8 +271,9 @@ Clear them with `unset`, or just open a new terminal.
 
 ### Permanent — edit `.env`
 
-Comment out one model block in `.env` and uncomment the other, then recreate.
-`.env.example` ships both blocks ready to swap.
+Comment out the active model block in `.env` and uncomment another, then
+`docker compose up -d`. `.env.example` ships all three blocks ready to swap,
+and each one sets every model-specific variable.
 
 ---
 
@@ -270,6 +297,7 @@ Expected in the container log:
 |---|---|
 | gpt-oss-20b | `Model loading took 12.87 GiB` |
 | gemma-4 | `Model loading took 15.76 GiB`, or 14.69 GiB with Intel attention |
+| Qwen3.8-27B | `Model loading took 17.56 GiB` |
 
 The pool size comes next, as `XPU KV cache size: … tokens, Maximum concurrency
 for … tokens per request: …x` (earlier docs here quote it as `GPU KV cache
@@ -306,7 +334,8 @@ the parser is broken. It isn't — check the field name first.
 "chat_template_kwargs": {"enable_thinking": true}
 ```
 
-To turn it on for *every* request, set this in `.env` and recreate:
+To turn it on for *every* request, set this in `.env` and recreate. The
+gemma-4 block in `.env.example` ships with it on:
 
 ```dotenv
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS={"enable_thinking":true}
@@ -314,6 +343,9 @@ VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS={"enable_thinking":true}
 
 Either way a request can override the server default in both directions, so it is
 a default and not a lock.
+
+- **Qwen3.8-27B** — thinks by default with no server setting. A request turns it
+  off with `"chat_template_kwargs": {"enable_thinking": false}`.
 
 ### What reasoning actually costs
 
@@ -360,10 +392,11 @@ task might make the model search.
 
 ## Model naming
 
-**One truthful name per model** — `gpt-oss-20b` and `gemma-4-26b-a4b`. The id is
+**One truthful name per model**: `gpt-oss-20b`, `gemma-4-26b-a4b` and
+`qwen3.8-27b`. The id is
 set by `VLLM_SERVED_MODEL_NAME` and is not validated against the checkpoint, so
-it *could* be used as a fixed label to hide a swap. Don't. The two models now
-share a context cap but differ enormously in prefill cost, so a consumer that
+it *could* be used as a fixed label to hide a swap. Don't. The models share a
+context cap but differ enormously in prefill cost, so a consumer that
 keeps sending gpt-oss-sized cold prompts to gemma-4 gets multi-minute stalls that
 look like a gateway fault rather than a deliberate model change.
 
@@ -393,7 +426,7 @@ here:
 | `0` | `enable_thinking: false` | reasoning is **suppressed** (`smoke.sh` inverts the check) |
 
 ```bash
-./smoke.sh                 # ALL PASS on both models as shipped
+./smoke.sh                 # ALL PASS on every model as shipped
 THINKING=1 ./smoke.sh      # proves a request can opt in to the trace
 ./bench.sh 1500            # reasoning needs the larger budget
 VLLM_ENDPOINT=http://<host>:8000 ./smoke.sh        # remote target
@@ -412,13 +445,14 @@ The endpoint is OpenAI-compatible and **unauthenticated** — see *Firewall* in 
 `http://<host>:8000/v1` using a served model name.
 
 **A model swap changes the served name, so the consumer 404s until its model
-mapping is updated.** That is deliberate: the two models have very different
+mapping is updated.** That is deliberate: the models have very different
 prefill costs, and a fixed label would hide that until it surfaced as a stall.
 
 Two integration details that cause silent breakage:
 
 - The reasoning trace is in **`reasoning`**, not `reasoning_content`.
-- gemma-4 reasoning is **opt-in**, so a gateway that doesn't pass
+- gemma-4 reasoning is **opt-in** unless `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS`
+  turns it on, so with it unset a gateway that doesn't pass
   `chat_template_kwargs` gets no trace. That's configuration, not a fault.
 
 ---
@@ -783,6 +817,70 @@ less, though it still works the same way.
 
 ---
 
+## Qwen3.8-27B
+
+Block C in `.env.example`. It's a dense 27B model: 48 of its 64 layers are
+linear attention (Gated DeltaNet) and 16 are full attention, so the KV cache
+grows with only those 16 layers. Every token reads all of its weights, which
+is why it decodes at well under half gemma-4's rate.
+
+**Checkpoint.** `RedHatAI/Qwen3.8-27B-INT4`: int4 symmetric, group size 128,
+in compressed-tensors format, with the vision encoder kept at full precision.
+It loads as 17.56 GiB and runs on `XPUwNa16LinearKernel`, the same int4
+kernel gemma-4's non-expert layers use. This engine can't quantize a
+full-precision checkpoint to int4 as it loads (the scaler can), so it needs a
+pre-quantized one. For a dense model the XPU kernel takes symmetric or
+asymmetric int4 with any group size that's a multiple of 32, which most int4
+builds on Hugging Face meet. Check `quantization_config` before trying another.
+
+**Intel attention, with images.** The full-attention heads are size 256, which
+Intel's kernel takes without the head-512 plugin. Qwen also doesn't use
+gemma-4's bidirectional attention over image tokens, so `auto` already picks
+FLASH_ATTN and image input keeps working. The block sets `FLASH_ATTN`
+explicitly anyway, so the choice is visible. In the log you should see
+`Using Flash Attention backend.`, and `Setting attention block size to 1600
+tokens`: vLLM makes the attention blocks large enough to hold the
+linear-attention state, and this is normal.
+
+The log also mentions Triton and even CUDA, and none of it means attention fell
+back. `Using Triton/FLA GDN prefill kernel` and `GDN decode kernel: cuda` come
+from shared setup code that runs on every platform. On XPU the linear-attention
+layers then call Intel's own kernel (`torch.ops._xpu_C.gdn_attention`) instead.
+`Warmed M-RoPE Triton kernels` is the position encoding, a small step outside
+attention. All of this is read from the v0.30.0 source.
+
+**Measured** on the B70 on 2026-10-02, same checkpoint, 131,072 context, the
+8.0 GiB KV value and compiled mode, true token counts, thinking off:
+
+| | Triton | Intel attention |
+|---|---|---|
+| decode, 512 tokens | 29.7 tok/s | **32.9 tok/s** |
+| 9,411-token prompt: first token | 73.6 s | **5.9 s** |
+| 18,786-token prompt: first token | 283.0 s | **12.8 s** |
+| 18,786-token prompt: decode after it | 5.3 tok/s | **30.2 tok/s** |
+| code hidden 10% into those prompts | found | found |
+| image input | works | works |
+| KV pool | 244,270 tokens (1.86×) | 244,270 tokens (1.86×) |
+| `smoke.sh` | ALL PASS | ALL PASS |
+
+On Triton the first-token time roughly quadruples when the prompt doubles, so
+long prompts get slow fast. With Intel attention it grows in line with the
+prompt. For comparison, the scaler runs the official BF16 checkpoint
+quantized to int4 as it loads, at 28.7 tok/s, and fits only 98,304 tokens of
+context on the same card ([INTEL_ARC_B70.md](../INTEL_ARC_B70.md)).
+
+**Leave room for thinking.** Qwen3.8 thinks by default and at length. On
+`bench.sh`'s default question it reasoned for 2,477 tokens, about 80 s, before
+the first word of the answer, so `./bench.sh 400` and `./bench.sh 2000` both
+end with no answer at all. Use `THINKING=0 ./bench.sh 400` to measure speed
+(32.4 tok/s, measured), and give clients a `max_tokens` of several thousand,
+or have them turn thinking off for quick replies.
+
+Compose doesn't pin a revision, so a new upload to that repo loads on the next
+boot. The measured one is `91bd022d5b49442a868bc35008f6c21e1860edfa`.
+
+---
+
 ## Performance
 
 ### Eager vs compiled — take compiled on gemma-4
@@ -1127,15 +1225,15 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 | Symptom | Cause |
 |---|---|
 | `.env` edit had no effect | `docker compose restart` was used (it keeps the old settings; use `up -d`), the file wasn't saved, or an `export`ed shell variable is overriding it (`env \| grep VLLM_`) |
-| `HTTP 404 ... model does not exist` | Stale `MODEL` in your shell, or the gateway points at the other block's name. `bench.sh` prints what *is* served |
-| Reasoning field always empty | Two candidates: gemma-4 without `enable_thinking` (it's opt-in by default), or the client reading `reasoning_content` instead of `reasoning` |
+| `HTTP 404 ... model does not exist` | Stale `MODEL` in your shell, or the gateway still asks for the previous block's name. `bench.sh` prints what *is* served |
+| Reasoning field always empty | Two candidates: gemma-4 without `enable_thinking` (opt-in unless `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` sets it), or the client reading `reasoning_content` instead of `reasoning` |
 | Trace returned but no answer | Reasoning consumed the whole `max_tokens`. Raise it — and note a hard prompt can burn 6,000 tokens without closing the trace |
 | OOM at boot | KV pin from the other model; `VLLM_KV_CACHE_MEMORY` is absolute and OOMs rather than shrinking |
-| `400` on long prompts | Above the cap. Both blocks now run 131,072; the ceiling is 162,496 and costs no VRAM |
+| `400` on long prompts | Above the cap. Every block runs 131,072; on gemma-4 the ceiling is 162,496 and costs no VRAM |
 | A big prompt seems to hang | Not hung — quadratic prefill on Triton. 9.6k ≈ 26 s, 32k ≈ 5 min, 64.7k ≈ 22 min (B60). Raise your client timeout, or switch on Intel attention if you can do without images |
 | Boot fails: `mm_prefix … requires FlashAttention v4` | `VLLM_ATTN_BACKEND=FLASH_ATTN` without `VLLM_TEXT_ONLY_FLAG=--language-model-only`. Set both or neither |
 | Boot fails with FLASH_ATTN refusing head size 512 | The plugin didn't load. Check the `head512_plugin` mount and `PYTHONPATH` in `compose.yaml`, and look for `xpu_head512` in the log. [PLUGIN.md](PLUGIN.md) covers how it loads |
-| `400 At most 0 image(s) may be provided in one prompt` | Intel attention is on, which means text-only. Comment out both switch lines and `up -d` to get images back |
+| `400 At most 0 image(s) may be provided in one prompt` | `--language-model-only` is set. On gemma-4 that comes with Intel attention. Comment out both switch lines and `up -d` to get images back. On Qwen3.8 it's a leftover from the gemma-4 block: set `VLLM_TEXT_ONLY_FLAG=--no-language-model-only` |
 | Much slower than *Intel attention for gemma-4* says, after an image upgrade | Look for `XPU kernel not compiled … falling back` in the log: a kernel variant is missing from the new image |
 | Context ceiling dropped after a tuning change | You raised `--max-num-batched-tokens`; it inflates the sliding-window reservation |
 | Boot segfaults in `getSortedImages` | `SYCL_CACHE_PERSISTENT=1` with the V2 runner. Must stay `0` |

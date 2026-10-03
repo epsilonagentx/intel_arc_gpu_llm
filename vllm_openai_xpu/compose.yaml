@@ -113,7 +113,7 @@ services:
       # The id clients call it by. Keep it TRUTHFUL — one name per model, so a
       # swap is visible downstream rather than silently changing the model
       # behind a fixed label. A swap therefore requires updating the consumer's
-      # model mapping; that is intentional, because the two models differ in
+      # model mapping; that is intentional, because the models differ in
       # context limit and prefill cost (see ../README.md and ./README.md).
       # Serving a second id is possible (the arg is nargs="+") but needs another
       # literal entry here — Compose cannot word-split one variable, and vLLM
@@ -125,8 +125,9 @@ services:
       # ./README.md "Per-request stats"
       - "--enable-per-request-metrics"
       # Attention backend. `auto` lets vLLM choose (TRITON_ATTN for gemma-4,
-      # FLASH_ATTN for gpt-oss). FLASH_ATTN plus --language-model-only runs
-      # gemma-4 on Intel's own kernel: much faster prefill, but no image input.
+      # FLASH_ATTN for gpt-oss and Qwen3.8). FLASH_ATTN plus --language-model-only
+      # runs gemma-4 on Intel's own kernel: much faster prefill, but no image
+      # input. Qwen3.8 keeps images on FLASH_ATTN.
       # The text-only flag is passed whole, like VLLM_EAGER_FLAG.
       # ./README.md "Intel attention for gemma-4"
       - "--attention-backend=${VLLM_ATTN_BACKEND:-auto}"

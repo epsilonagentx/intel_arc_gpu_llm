@@ -176,47 +176,8 @@ of first-request compile.
 | HF repo | On-disk | `--reasoning-parser` | `--tool-call-parser` | Reasoning |
 |---------|---------|----------------------|----------------------|-----------|
 | `openai/gpt-oss-20b` | ~13 GB MXFP4 | `openai_gptoss` | `openai` | Always on; effort via `reasoning_effort` |
-| `Qwen/Qwen3-32B-AWQ` | ~19 GB | `qwen3` | `hermes` | Hybrid; `/no_think` disables |
 
 Sizes are on-disk cache footprint, not loaded weights.
-
-### Worked example: gpt-oss-20b ↔ Qwen3-32B-AWQ
-
-With no `.env` overrides the compose defaults serve gpt-oss-20b. To serve
-Qwen3-32B-AWQ instead:
-
-```dotenv
-VLLM_MODEL=Qwen/Qwen3-32B-AWQ
-VLLM_SERVED_MODEL_NAME=qwen3-32b
-VLLM_MAX_MODEL_LEN=7168
-VLLM_GPU_MEMORY_UTILIZATION=0.9
-VLLM_REASONING_PARSER=qwen3
-VLLM_TOOL_CALL_PARSER=hermes
-```
-
-…then `docker compose up -d vllm`. What changed, and why each one matters:
-
-- **Context 131,072 → 7,168.** The empirical B60 cap for this model; 10k and 12k
-  both fail vLLM's KV pre-check at startup. Qwen3-32B is **dense**, so unlike
-  gpt-oss it gets no sliding-window discount on KV — that one architectural
-  difference is the whole reason the context collapses by 18×.
-- **Reasoning parser → `qwen3`.** Qwen3 is hybrid-thinking (`/no_think` in the
-  prompt turns it off). The `openai_gptoss` parser would leave the reasoning field
-  silently empty.
-- **Tool parser → `hermes`.** Qwen3 emits Hermes-style tool calls, not gpt-oss's
-  `openai` format. The image also ships `qwen3_xml` and `qwen3_coder`; the latter
-  is only for Qwen3-**Coder**.
-- **Utilization 0.80 → 0.9.** Qwen3-32B-AWQ's weights are ~18 GiB, so 0.80 leaves
-  too little for a usable pool. ⚠ **This is over the 0.86 OOM edge described
-  above** — it is a tight fit on 22.7 GiB and the reason the context is only
-  7,168. Watch real VRAM and size it empirically rather than trusting this
-  number. You must also unset any `--kv-cache-memory-bytes` pin, which is
-  absolute and OOMs rather than shrinking.
-- **AWQ, not FP8.** The official `Qwen/*-FP8` weights hit an XPU bug on this
-  image. AWQ is the working path.
-
-Swapping back is commenting those lines out again — the compose defaults *are*
-the gpt-oss-20b config — and force-recreating.
 
 ---
 
