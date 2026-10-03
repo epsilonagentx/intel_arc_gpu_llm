@@ -127,9 +127,10 @@ No `--force-recreate` needed: editing `compose.yaml` changes the service's
 config hash, so Compose recreates the container by itself. The `.env`-wired
 engines work the same way, since their `.env` values are part of that hash.
 
-There is no `.env.example` in this folder on purpose. These flags are not
-independent of one another, and three of them will break the engine or silently
-corrupt its output if carried across to a different model:
+This folder's `.env.example` holds only where the models live (`HF_CACHE`,
+`VLLM_USER`) and `HF_TOKEN`. The model flags stay in `compose.yaml` on purpose.
+They are not independent of one another, and three of them will break the
+engine or silently corrupt its output if carried across to a different model:
 
 | flag | why it does not travel |
 |---|---|
@@ -603,7 +604,9 @@ exposes are harmless — they are not SYCL XPUs, so there is no wrong-GPU risk.
 - **`hf-cache` is shared with `vllm_xpu`** via the deliberate `name: llm`
   project name, so gpt-oss-20b's ~13 GB of weights are reused, not
   re-downloaded. `docker volume rm llm_hf-cache` would delete the gpt-oss
-  weights too — prune selectively if reclaiming space.
+  weights too — prune selectively if reclaiming space. `HF_CACHE` and
+  `VLLM_USER` move the weights to a folder you own, see
+  [../README.md](../README.md) *Volumes*.
 - **`vllm-scaler-cache` is separate** from `vllm_xpu`'s `vllm-cache` because
   compiled kernels are image-version-specific.
 
