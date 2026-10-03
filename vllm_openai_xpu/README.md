@@ -120,7 +120,7 @@ silently degrades it.
 
 | Variable | What it sets |
 |----------|--------------|
-| `VLLM_MODEL` | Hugging Face repo ID |
+| `VLLM_MODEL` | Hugging Face repo ID, or a local folder such as the FP8 copy from *Faster decode* |
 | `VLLM_SERVED_MODEL_NAME` | The id clients call it by — see *Model naming* |
 | `VLLM_REASONING_PARSER` | Model-family specific; wrong value = empty reasoning, **not** a crash |
 | `VLLM_TOOL_CALL_PARSER` | Model-family specific, same quiet failure mode |
@@ -130,6 +130,7 @@ silently degrades it.
 | `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. The gemma-4 block sets `{"enable_thinking":true}`, which turns reasoning on for every request; `null` leaves it to each request. Qwen3.8 thinks by default without it |
 | `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` asks for Intel's kernel. gemma-4 needs the next variable with it — see *Intel attention for gemma-4*. Qwen3.8 doesn't |
 | `VLLM_TEXT_ONLY_FLAG` | `--no-language-model-only` (default) or `--language-model-only`, which turns image input off. Passed whole, like `VLLM_EAGER_FLAG` |
+| `VLLM_SPECULATIVE_CONFIG` | Speculative decoding as JSON; `null` (default) is off. Qwen3.8's block sets `{"method":"mtp","num_speculative_tokens":3}`, which uses the draft head only its checkpoint ships — see *Faster decode* |
 
 Shell variables beat `.env`, but **only for the names you pass** — so the
 temporary-override block under *Switching models* has to set all of them, not
@@ -148,12 +149,12 @@ just `VLLM_MODEL`.
 | | gpt-oss-20b | gemma-4-26B-A4B-it (int4) | Qwen3.8-27B (int4) |
 |---|---|---|---|
 | type | MoE | MoE | dense, with linear-attention layers |
-| weights on device | 12.87 GiB | 15.76 GiB (`adeepv`) | 17.56 GiB |
+| weights on device | 12.87 GiB | 15.76 GiB (`adeepv`) | 17.56 GiB, 17.18 with an FP8 output layer |
 | max context | 131,072 | 131,072 (ceiling 162,496 on the B60's 4.25 GiB pin) | 131,072 (B70) |
 | reasoning | always on, no off switch | opt-in per request | on by default, a request can turn it off |
 | large cold prompts | linear, fine | **quadratic on Triton — see warning**; fast with Intel attention | fast with Intel attention, slow on Triton |
 | image input | no | yes, unless Intel attention is on | yes, also with Intel attention |
-| decode on the B70 | not measured | 86 tok/s with Intel attention | 32.9 tok/s with Intel attention |
+| decode on the B70 | not measured | 86 tok/s with Intel attention | 32.9 tok/s with Intel attention, 65.8 with MTP and an FP8 output layer |
 
 Speed, first-token time and KV pool depend on the card, so they're in the card
 files: [B60](../INTEL_ARC_B60.md#measured-results) and
@@ -165,8 +166,10 @@ gpt-oss-20b's prefill stays linear, which made it the better choice for
 coding-CLI traffic through a gateway while gemma-4 ran on Triton. gemma-4 is the
 newer and stronger model and is vision-capable; with Intel attention switched on
 it reads a 24k-token prompt in 4.2 s on the B70, at the cost of image input.
-Qwen3.8-27B is a dense model, so it decodes at well under half gemma-4's rate,
-but it keeps image input on Intel attention — see [*Qwen3.8-27B*](#qwen38-27b).
+Qwen3.8-27B is a dense model, so on its own it decodes at well under half
+gemma-4's rate. With MTP and an FP8 output layer it reaches about three quarters
+of it, and it keeps image input on Intel attention — see
+[*Qwen3.8-27B*](#qwen38-27b).
 
 > ⚠ **`bench.sh` under-reports gemma-4 by ~15%, and the reason matters.** It
 > counts SSE *chunks*, and with reasoning on the reasoning channel packs **1.15
@@ -205,16 +208,19 @@ VLLM_EAGER_FLAG=--enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
 VLLM_ATTN_BACKEND=auto \
 VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
+VLLM_SPECULATIVE_CONFIG=null \
 docker compose up -d
 ```
 
-The same for Qwen3.8-27B, with the B70's KV value:
+The same for Qwen3.8-27B on the B70, with MTP and the FP8 output layer from
+*Faster decode* (convert first; for the plain checkpoint use
+`RedHatAI/Qwen3.8-27B-INT4` and `null` instead):
 
 ```bash
 cd vllm_openai_xpu
 docker compose down
 
-VLLM_MODEL=RedHatAI/Qwen3.8-27B-INT4 \
+VLLM_MODEL=/cache/huggingface/local/Qwen3.8-27B-INT4-fp8head \
 VLLM_SERVED_MODEL_NAME=qwen3.8-27b \
 VLLM_REASONING_PARSER=qwen3 \
 VLLM_TOOL_CALL_PARSER=qwen3_coder \
@@ -224,6 +230,7 @@ VLLM_EAGER_FLAG=--no-enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
 VLLM_ATTN_BACKEND=FLASH_ATTN \
 VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
+VLLM_SPECULATIVE_CONFIG='{"method":"mtp","num_speculative_tokens":3}' \
 docker compose up -d
 ```
 
@@ -822,7 +829,8 @@ less, though it still works the same way.
 Block C in `.env.example`. It's a dense 27B model: 48 of its 64 layers are
 linear attention (Gated DeltaNet) and 16 are full attention, so the KV cache
 grows with only those 16 layers. Every token reads all of its weights, which
-is why it decodes at well under half gemma-4's rate.
+is why it decodes at well under half gemma-4's rate, until MTP and an FP8
+output layer double it (*Faster decode* below).
 
 **Checkpoint.** `RedHatAI/Qwen3.8-27B-INT4`: int4 symmetric, group size 128,
 in compressed-tensors format, with the vision encoder kept at full precision.
@@ -875,6 +883,75 @@ the first word of the answer, so `./bench.sh 400` and `./bench.sh 2000` both
 end with no answer at all. Use `THINKING=0 ./bench.sh 400` to measure speed
 (32.4 tok/s, measured), and give clients a `max_tokens` of several thousand,
 or have them turn thinking off for quick replies.
+
+### Faster decode: MTP and an FP8 output layer
+
+Two changes together double Qwen3.8's decode, from 32.9 to 65.8 tok/s, with
+the same answers.
+
+**MTP speculative decoding.** The checkpoint ships a small draft head (MTP,
+0.79 GiB) that guesses the next tokens; the main model then checks several
+guesses in one step. vLLM supports it for this model out of the box:
+`VLLM_SPECULATIVE_CONFIG={"method":"mtp","num_speculative_tokens":3}`.
+Each extra draft token is accepted less often (about 73%, 46% and 28% for
+the first three), so 3 is the sweet spot: 2 was slower, and 4 was no faster
+with greedy and slower with sampling.
+
+**An FP8 output layer.** The checkpoint keeps `lm_head`, 248,320 rows by
+5,120, at 16-bit (2.37 GiB), and with MTP it's read for the main step and
+again for every draft, because the draft head shares it. vLLM can't quantize
+it as it loads (its online quantization skips the output layer), but it does
+load a checkpoint that declares an FP8 `lm_head`, and runs it on XPU's
+native FP8 W8A16 kernel. [`tools/lm_head_fp8.py`](tools/lm_head_fp8.py)
+makes such a copy next to the original, which stays untouched:
+
+```bash
+cd vllm_openai_xpu
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v ~/models/hf:/cache/huggingface -v "$PWD":/work:ro \
+  --entrypoint python3 vllm/vllm-openai-xpu:v0.30.0 \
+  /work/tools/lm_head_fp8.py RedHatAI/Qwen3.8-27B-INT4
+```
+
+Use the folder `HF_CACHE` points at in place of `~/models/hf`. With the
+default named volume that's `-v llm_hf-cache:/cache/huggingface`, without
+the `--user` part. The copy needs about 16 GB, because this checkpoint keeps
+nearly everything in the one file that also holds `lm_head`. Then point the
+engine at it:
+
+```dotenv
+VLLM_MODEL=/cache/huggingface/local/Qwen3.8-27B-INT4-fp8head
+VLLM_SPECULATIVE_CONFIG={"method":"mtp","num_speculative_tokens":3}
+VLLM_KV_CACHE_MEMORY=8603448832
+```
+
+The KV value stays at 8.0 GiB, the same as without MTP: the pool is 208,093
+tokens (1.59× at 131,072) and the card sits at about 31,000 of 32,656 MiB.
+A 56,620-token prompt and four requests at once didn't move that by more
+than a few MiB. 7.0 GiB (`7516192768`) also works, with 181,068 tokens and
+about 1 GiB more headroom.
+
+**Measured** on the B70 on 2026-10-03, same benchmark throughout: three
+different prompts, each sent once, 512 tokens, thinking off, decode timed
+from the first token to the last, median per run. The MTP rows ran at
+7.0 GiB; at 8.0 GiB the FP8 set measured 62.1 and 64.9 tok/s, the same
+within noise:
+
+| | default sampling | greedy |
+|---|---|---|
+| no MTP | 32.2 | 32.9 |
+| MTP, 3 drafts, 16-bit output layer | 53.9, 53.4 | 54.8, 56.5 |
+| **MTP, 3 drafts, FP8 output layer** | **58.9, 53.1, 60.3** | **67.3, 64.8, 65.3** |
+| MTP, 2 drafts, 16-bit output layer | 49.1 | 53.6 |
+| MTP, 4 drafts, 16-bit output layer | 46.6 | 54.0 |
+
+- Speed depends on the text: code is easiest to guess (up to 80 tok/s),
+  free prose the hardest (around 50).
+- With sampling the FP8 gain is smaller and noisier than with greedy (+7%
+  against +18%), because the drafts that get accepted change from run to run.
+- 14 of 14 greedy answers (10 arithmetic, 4 open questions) came out
+  byte-identical with the FP8 and the 16-bit output layer. `smoke.sh` passes,
+  image input still works, and the prefix cache still hits on follow-up turns.
 
 Compose doesn't pin a revision, so a new upload to that repo loads on the next
 boot. The measured one is `91bd022d5b49442a868bc35008f6c21e1860edfa`.

@@ -132,6 +132,10 @@ services:
       # ./README.md "Intel attention for gemma-4"
       - "--attention-backend=${VLLM_ATTN_BACKEND:-auto}"
       - "${VLLM_TEXT_ONLY_FLAG:---no-language-model-only}"
+      # Speculative decoding. `null` is off. Qwen3.8 ships an MTP draft head:
+      # '{"method":"mtp","num_speculative_tokens":3}' roughly doubles its decode
+      # together with an FP8 output layer. ./README.md "Faster decode"
+      - "--speculative-config=${VLLM_SPECULATIVE_CONFIG:-null}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 30s

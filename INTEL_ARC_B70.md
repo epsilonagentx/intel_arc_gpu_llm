@@ -42,6 +42,7 @@ engine templates is the same on both cards.
 |---|---|---|---|---|
 | `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | 131,072 | `VLLM_KV_CACHE_MEMORY=11274289152` (10.5 GiB) | compiled |
 | `vllm_openai_xpu/` | Qwen3.8-27B, `RedHatAI/Qwen3.8-27B-INT4` | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
+| `vllm_openai_xpu/` | Qwen3.8-27B with MTP and an FP8 output layer | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `scaler/` | Qwen3.8-27B, int4 at load | 98,304 | `--gpu-memory-utilization 0.90`, no byte value | eager |
 | `vllm_openai_xpu/` | gpt-oss-20b | — | not measured | — |
 | `scaler/` | gpt-oss-20b | — | not measured | — |
@@ -134,6 +135,26 @@ than the scaler below. It also fits the full 131,072 context where the scaler
 fits 98,304. How to run it is in
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#qwen38-27b).
 
+## Measured: Qwen3.8-27B with MTP and an FP8 output layer
+
+Same engine, checkpoint and context, with MTP speculative decoding (3 draft
+tokens) and the output layer converted to FP8 (2026-10-03). The speed rows
+ran at a 7.0 GiB KV setting; 8.0 GiB measured the same within noise. Three different prompts, each sent once, 512 tokens, thinking
+off, median per run:
+
+| | default sampling | greedy |
+|---|---|---|
+| no MTP | 32.2 tok/s | 32.9 tok/s |
+| MTP, 16-bit output layer | 53.9, 53.4 tok/s | 54.8, 56.5 tok/s |
+| **MTP, FP8 output layer** | **58.9, 53.1, 60.3 tok/s** | **67.3, 64.8, 65.3 tok/s** |
+
+Weights take 17.18 GiB. At the 8.0 GiB setting the KV pool is 208,093 tokens
+(1.59×) and the card sits at about 31,000 of 32,656 MiB, steady through a
+56,620-token prompt and four requests at once. At 7.0 GiB it's 181,068 tokens
+(1.38×) with about 1 GiB more headroom. Greedy answers are byte-identical to
+the 16-bit output layer, and `smoke.sh` passes. How to set it up is in
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#faster-decode-mtp-and-an-fp8-output-layer).
+
 ## Measured: Qwen3.8-27B on the scaler
 
 `intel/llm-scaler-vllm:0.26.0-b2`, the official BF16 checkpoint quantized to
@@ -161,6 +182,7 @@ A model is listed once it has actually booted and served requests on this card.
 | gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | `vllm_openai_xpu` | 131,072 | 74 tok/s on Triton, 86 with Intel attention |
 | gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | int4 W4A16, group-32 | 16.82 GiB | `vllm_openai_xpu` | 131,072 | 68.4–69.9 tok/s on Triton |
 | Qwen3.8-27B | `RedHatAI/Qwen3.8-27B-INT4` | int4 W4A16, group-128 | 17.56 GiB | `vllm_openai_xpu` | 131,072 | 32.9 tok/s with Intel attention, 29.7 on Triton |
+| Qwen3.8-27B | the same, with `lm_head` converted to FP8 by `vllm_openai_xpu/tools/lm_head_fp8.py` | int4 W4A16, FP8 output layer | 17.18 GiB | `vllm_openai_xpu` | 131,072 | 65.8 tok/s greedy with MTP (3 drafts) |
 | Qwen3.8-27B | `Qwen/Qwen3.8-27B` | int4 at load (`sym_int4`) | 17.83 GiB | `scaler` | 98,304 | 28.7 tok/s |
 
 ## Not measured yet
@@ -168,7 +190,8 @@ A model is listed once it has actually booted and served requests on this card.
 - gpt-oss-20b on any of the three engines, and so a B70 KV value for it.
 - The stock `vllm_xpu/` engine at all.
 - More than one request at a time on gemma-4 or Qwen3.8. Every figure above is
-  a single request.
+  a single request. Speculative decoding usually gains less when several
+  requests share the card (inferred, not tested here).
 - Power while decoding with Intel attention.
 - Models that fit 32 GB but not 24 GB, such as Qwen3.5/3.6-35B-A3B in AWQ
   (about 24 GB of weights). None has been tried.
