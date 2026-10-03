@@ -138,21 +138,27 @@ fits 98,304. How to run it is in
 ## Measured: Qwen3.8-27B with MTP and an FP8 output layer
 
 Same engine, checkpoint and context, with MTP speculative decoding (3 draft
-tokens) and the output layer converted to FP8 (2026-10-03). The speed rows
-ran at a 7.0 GiB KV setting; 8.0 GiB measured the same within noise. Three different prompts, each sent once, 512 tokens, thinking
-off, median per run:
+tokens) and the output layer converted to FP8 (2026-10-03). The MTP rows with
+a 16-bit or FP8 output layer ran at a 7.0 GiB KV setting, the int4 row at
+8.0 GiB; the FP8 set measured the same at 8.0 GiB within noise. Three
+different prompts, each sent once, 512 tokens, thinking off, median per run:
 
 | | default sampling | greedy |
 |---|---|---|
 | no MTP | 32.2 tok/s | 32.9 tok/s |
 | MTP, 16-bit output layer | 53.9, 53.4 tok/s | 54.8, 56.5 tok/s |
 | **MTP, FP8 output layer** | **58.9, 53.1, 60.3 tok/s** | **67.3, 64.8, 65.3 tok/s** |
+| MTP, int4 output layer and draft head | 71.5, 72.2 tok/s | 73.9, 73.5 tok/s |
 
 Weights take 17.18 GiB. At the 8.0 GiB setting the KV pool is 208,093 tokens
 (1.59×) and the card sits at about 31,000 of 32,656 MiB, steady through a
 56,620-token prompt and four requests at once. At 7.0 GiB it's 181,068 tokens
 (1.38×) with about 1 GiB more headroom. Greedy answers are byte-identical to
-the 16-bit output layer, and `smoke.sh` passes. How to set it up is in
+the 16-bit output layer, and `smoke.sh` passes. The int4 output layer is
+faster but shifts the next-token ranking measurably, with the same GSM8K
+score; the quality numbers are in
+[vllm_openai_xpu/tools/README.md](vllm_openai_xpu/tools/README.md#measured).
+How to set it up is in
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#faster-decode-mtp-and-an-fp8-output-layer).
 
 ## Measured: Qwen3.8-27B on the scaler
@@ -182,7 +188,8 @@ A model is listed once it has actually booted and served requests on this card.
 | gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | `vllm_openai_xpu` | 131,072 | 74 tok/s on Triton, 86 with Intel attention |
 | gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | int4 W4A16, group-32 | 16.82 GiB | `vllm_openai_xpu` | 131,072 | 68.4–69.9 tok/s on Triton |
 | Qwen3.8-27B | `RedHatAI/Qwen3.8-27B-INT4` | int4 W4A16, group-128 | 17.56 GiB | `vllm_openai_xpu` | 131,072 | 32.9 tok/s with Intel attention, 29.7 on Triton |
-| Qwen3.8-27B | the same, with `lm_head` converted to FP8 by `vllm_openai_xpu/tools/lm_head_fp8.py` | int4 W4A16, FP8 output layer | 17.18 GiB | `vllm_openai_xpu` | 131,072 | 65.8 tok/s greedy with MTP (3 drafts) |
+| Qwen3.8-27B | the same, output layer converted to FP8 by `vllm_openai_xpu/tools/quantize_heads.py` | int4 W4A16, FP8 output layer | 17.18 GiB | `vllm_openai_xpu` | 131,072 | 65.8 tok/s greedy with MTP (3 drafts) |
+| Qwen3.8-27B | the same, output layer and draft head converted to int4 (`--head int4 --mtp-int4`) | int4 W4A16 throughout | 15.8 GiB | `vllm_openai_xpu` | 131,072 | 73.7 tok/s greedy with MTP (3 drafts) |
 | Qwen3.8-27B | `Qwen/Qwen3.8-27B` | int4 at load (`sym_int4`) | 17.83 GiB | `scaler` | 98,304 | 28.7 tok/s |
 
 ## Not measured yet

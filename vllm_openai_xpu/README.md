@@ -902,22 +902,11 @@ with greedy and slower with sampling.
 again for every draft, because the draft head shares it. vLLM can't quantize
 it as it loads (its online quantization skips the output layer), but it does
 load a checkpoint that declares an FP8 `lm_head`, and runs it on XPU's
-native FP8 W8A16 kernel. [`tools/lm_head_fp8.py`](tools/lm_head_fp8.py)
-makes such a copy next to the original, which stays untouched:
-
-```bash
-cd vllm_openai_xpu
-docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v ~/models/hf:/cache/huggingface -v "$PWD":/work:ro \
-  --entrypoint python3 vllm/vllm-openai-xpu:v0.30.0 \
-  /work/tools/lm_head_fp8.py RedHatAI/Qwen3.8-27B-INT4
-```
-
-Use the folder `HF_CACHE` points at in place of `~/models/hf`. With the
-default named volume that's `-v llm_hf-cache:/cache/huggingface`, without
-the `--user` part. The copy needs about 16 GB, because this checkpoint keeps
-nearly everything in the one file that also holds `lm_head`. Then point the
-engine at it:
+native FP8 W8A16 kernel. [`tools/quantize_heads.py`](tools/quantize_heads.py)
+makes such a copy next to the original, which stays untouched. How to run it,
+what it changes in the Red Hat checkpoint, and its two faster variants (an
+int4 draft head, and an int4 output layer) are in
+[tools/README.md](tools/README.md). Then point the engine at the copy:
 
 ```dotenv
 VLLM_MODEL=/cache/huggingface/local/Qwen3.8-27B-INT4-fp8head
@@ -933,9 +922,9 @@ about 1 GiB more headroom.
 
 **Measured** on the B70 on 2026-10-03, same benchmark throughout: three
 different prompts, each sent once, 512 tokens, thinking off, decode timed
-from the first token to the last, median per run. The MTP rows ran at
-7.0 GiB; at 8.0 GiB the FP8 set measured 62.1 and 64.9 tok/s, the same
-within noise:
+from the first token to the last, median per run. The int4-draft-head rows
+ran at 8.0 GiB, the other MTP rows at 7.0 GiB; at 8.0 GiB the FP8 set
+measured 62.1 and 64.9 tok/s, the same within noise:
 
 | | default sampling | greedy |
 |---|---|---|
@@ -944,25 +933,20 @@ within noise:
 | **MTP, 3 drafts, FP8 output layer** | **58.9, 53.1, 60.3** | **67.3, 64.8, 65.3** |
 | MTP, 2 drafts, 16-bit output layer | 49.1 | 53.6 |
 | MTP, 4 drafts, 16-bit output layer | 46.6 | 54.0 |
-| MTP, 3 drafts, FP8 output layer, int4 draft head (`--mtp-int4`) | 60.8, 63.3 | 67.6, 68.1 |
+| MTP, 3 drafts, FP8 output layer, int4 draft head | 60.8, 63.3 | 67.6, 68.1 |
+| MTP, 3 drafts, int4 output layer, int4 draft head | 71.5, 72.2 | 73.9, 73.5 |
 
 - Speed depends on the text: code is easiest to guess (up to 80 tok/s),
   free prose the hardest (around 50).
 - With sampling the FP8 gain is smaller and noisier than with greedy (+7%
   against +18%), because the drafts that get accepted change from run to run.
-- 14 of 14 greedy answers (10 arithmetic, 4 open questions) came out
-  byte-identical with the FP8 and the 16-bit output layer. `smoke.sh` passes,
-  image input still works, and the prefix cache still hits on follow-up turns.
-
-**Optional: the draft head at int4.** `--mtp-int4` also packs the draft
-head's seven linear layers to int4, in the checkpoint's own format and group
-size, and the copy lands in `Qwen3.8-27B-INT4-fp8head-int4mtp` instead. The
-head shrinks from 0.79 to 0.20 GiB and greedy decode gains about 3%, less
-than its size suggests: the draft steps are small, so fixed overhead per
-step matters more there than bytes. The main model still checks every draft,
-so answers stay the same, except that a near-tie between two words can tip
-the other way: 13 of 14 probe answers were identical, and the fourteenth was
-reworded halfway, still correct.
+- On the first 100 GSM8K problems all three output layers (16-bit, FP8, int4)
+  scored 96. Ranked by next token, FP8 stays close to two identical runs of
+  the same setup; int4 changes the top token at about 3% more positions, so
+  it's the fastest choice but not a free one. Details in
+  [tools/README.md](tools/README.md#measured).
+- `smoke.sh` passes, image input still works, and the prefix cache still hits
+  on follow-up turns.
 
 Compose doesn't pin a revision, so a new upload to that repo loads on the next
 boot. The measured one is `91bd022d5b49442a868bc35008f6c21e1860edfa`.
