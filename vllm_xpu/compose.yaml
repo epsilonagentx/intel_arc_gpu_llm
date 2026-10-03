@@ -14,6 +14,9 @@ services:
     # -> without it boot dies ("oneCCL: ze_fd_manager.cpp:144 ... opendir failed").
     # The AMD iGPU nodes this also exposes are harmless (not SYCL XPUs). NOTE:
     # 0.17.0-xpu did NOT need this — it booted with only renderD128 + card1.
+    # Root by default. Set VLLM_USER=1000:1000 (your `id -u`:`id -g`) and the
+    # files it writes are yours. ../README.md "Volumes"
+    user: "${VLLM_USER:-0:0}"
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -23,14 +26,17 @@ services:
     shm_size: "16g"
     volumes:
       - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration (see devices: above)
-      - hf-cache:/root/.cache/huggingface
+      # Model weights. A named volume by default; set HF_CACHE to a host
+      # folder to keep them there. ../README.md "Volumes"
+      - ${HF_CACHE:-hf-cache}:/cache/huggingface
       # Compiled kernels are image-version-specific. When upgrading the image,
       # clear this cache ONCE (from this folder: `docker compose down`, then
       # `docker volume rm llm_vllm-cache`) so the new image compiles fresh — that
       # is the validated path. Steady state it self-fills and speeds restarts.
-      - vllm-cache:/root/.cache/vllm
+      - vllm-cache:/cache/vllm
     environment:
-      HF_HOME: /root/.cache/huggingface
+      HF_HOME: /cache/huggingface
+      VLLM_CACHE_ROOT: /cache/vllm
       # Don't restrict ONEAPI_DEVICE_SELECTOR; torch.compile/Inductor needs to
       # see all SYCL devices (CPU + GPU) to bring up its runtime.
       ZES_ENABLE_SYSMAN: "1"

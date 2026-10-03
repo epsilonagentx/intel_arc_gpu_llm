@@ -21,6 +21,9 @@ services:
     # world_size=1. This is upstream's documented recipe, not a local workaround.
     # (0.29.0 skips the oneCCL warm-up at world_size=1, so the bind may now be
     # redundant here — keep it until a boot without it proves otherwise.)
+    # Root by default. Set VLLM_USER=1000:1000 (your `id -u`:`id -g`) and the
+    # files it writes are yours. ../README.md "Volumes"
+    user: "${VLLM_USER:-0:0}"
     devices:
       - /dev/dri:/dev/dri
     group_add:
@@ -30,16 +33,19 @@ services:
     shm_size: "16g"
     volumes:
       - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration
-      - hf-cache:/root/.cache/huggingface      # shared with vllm_xpu/ + scaler/ — weights not re-downloaded
+      # Model weights. A named volume by default; set HF_CACHE to a host
+      # folder to keep them there. ../README.md "Volumes"
+      - ${HF_CACHE:-hf-cache}:/cache/huggingface   # shared with vllm_xpu/ + scaler/ — weights not re-downloaded
       # Compile cache — kernels are image-specific, so this engine gets its own.
       # Clear once after any image bump:
       #   docker compose down && docker volume rm llm_vllm-openai-cache
-      - vllm-openai-cache:/root/.cache/vllm
+      - vllm-openai-cache:/cache/vllm
       # vLLM plugin that lets FLASH_ATTN take head size 512 on XPU. Inert unless
       # VLLM_ATTN_BACKEND=FLASH_ATTN. ./README.md "Intel attention for gemma-4"
       - ./head512_plugin:/opt/vllm-plugins:ro
     environment:
-      HF_HOME: /root/.cache/huggingface
+      HF_HOME: /cache/huggingface
+      VLLM_CACHE_ROOT: /cache/vllm
       ZES_ENABLE_SYSMAN: "1"
       # MUST be 0 with the V2 runner below: 1 SEGFAULTS at boot inside the SYCL
       # persistent code-cache read. Costs a kernel rebuild each boot (~70 s
