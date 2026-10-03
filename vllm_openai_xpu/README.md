@@ -1104,6 +1104,10 @@ caches stay per-engine, because kernels are image-specific.
 - **`down -v` from ANY engine folder deletes `llm_hf-cache`**, taking the cached
   weights with it. Plain project volumes are removable by any project member. Use
   bare `down`.
+- **`HF_CACHE` points the weights at a host folder** instead of `llm_hf-cache`,
+  and `VLLM_USER` runs the engine as you so the files stay yours. Engines still
+  share the weights as long as every folder's `.env` uses the same `HF_CACHE`,
+  and `down -v` can't delete a host folder. [../README.md](../README.md) *Volumes*
 
 **Swap procedure** — one GPU, so exactly one engine runs at a time:
 

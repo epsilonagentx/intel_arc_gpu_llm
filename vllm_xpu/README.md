@@ -277,7 +277,9 @@ Unlike the upstream engine, this one runs happily with
 - **`hf-cache`** holds the downloaded model weights and is shared with the other
   two engines on purpose, so swapping engines doesn't re-download anything. It's
   also why `docker compose down -v` from *any* engine folder is a bad idea: it
-  takes the shared weights with it. Use a bare `down`.
+  takes the shared weights with it. Use a bare `down`. To keep the weights in a
+  folder you own instead, set `HF_CACHE` and `VLLM_USER`, see
+  [../README.md](../README.md) *Volumes*.
 - **`vllm-cache`** holds compiled kernels and belongs to this engine alone. See
   *Upgrading the image* for when to clear it.
 

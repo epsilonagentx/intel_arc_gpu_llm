@@ -273,17 +273,20 @@ firewall (firewalld, nftables, iptables) does the same job:
 
 ## Volumes
 
-Host path: `/var/lib/docker/volumes/llm_<name>/_data`
-
 | Volume | Contents | Notes |
 |--------|----------|-------|
-| `hf-cache` | HF model weights | Survives compose changes; **shared by all three engines** (no re-download when you swap) |
+| `hf-cache` | HF model weights | Survives compose changes; **shared by all three engines** (no re-download when you swap). Can be a host folder instead, see below |
 | `vllm-cache` | torch.compile + AOT artifacts (`vllm_xpu/`, the stock engine) | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
 | `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`scaler/compose.yaml`) first boots. Stays near-empty — that engine runs `--enforce-eager`, so nothing is compiled, and it needs no clearing on an image bump |
 | `vllm-openai-cache` | upstream engine compile cache | Own volume again (kernels are image-specific). This engine runs **compiled**, so unlike the scaler's it does fill — clear it once after an image bump, per [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md) |
 
-Open WebUI's data lives in its own project, so its volume is
-`open-webui_open-webui-data` (not `llm_*`) — see *Running Open WebUI (optional)*.
+**The models can live in any host folder**, e.g. `~/models/hf`. Set `HF_CACHE`
+to its absolute path in each engine's `.env`; the same value everywhere keeps
+one shared copy.
+
+**The engines don't need root.** They reach the GPU through the host's `render`
+and `video` groups, which `group_add` already passes in. Set `VLLM_USER` to your
+`id -u`:`id -g`, e.g. `1000:1000`, so the files they write are yours.
 
 ---
 

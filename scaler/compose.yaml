@@ -15,6 +15,9 @@ services:
     image: intel/llm-scaler-vllm:0.26.0-b2
     container_name: vllm-scaler
     restart: unless-stopped
+    # Root by default. Set VLLM_USER=1000:1000 (your `id -u`:`id -g`) and the
+    # files it writes are yours. ../README.md "Volumes"
+    user: "${VLLM_USER:-0:0}"
     # Whole /dev/dri + the by-path bind below are BOTH required (oneCCL). ./README.md §5
     devices:
       - /dev/dri:/dev/dri
@@ -25,13 +28,16 @@ services:
     shm_size: "32g"          # per llm-scaler docs
     volumes:
       - /dev/dri/by-path:/dev/dri/by-path:ro   # oneCCL device enumeration
-      - hf-cache:/root/.cache/huggingface      # shared with vllm_xpu — weights not re-downloaded
+      # Model weights. A named volume by default; set HF_CACHE to a host
+      # folder to keep them there. ../README.md "Volumes"
+      - ${HF_CACHE:-hf-cache}:/cache/huggingface   # shared with vllm_xpu — weights not re-downloaded
       # Compile cache. Under --enforce-eager nothing is compiled, so this only
       # ever holds hash-guarded model metadata — no need to clear on an image
       # bump. Measured: ./README.md §6
-      - vllm-scaler-cache:/root/.cache/vllm
+      - vllm-scaler-cache:/cache/vllm
     environment:
-      HF_HOME: /root/.cache/huggingface
+      HF_HOME: /cache/huggingface
+      VLLM_CACHE_ROOT: /cache/vllm
       ZES_ENABLE_SYSMAN: "1"
       SYCL_CACHE_PERSISTENT: "1"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"
