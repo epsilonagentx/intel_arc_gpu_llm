@@ -32,7 +32,8 @@ extrapolation, it says so.
 | Model runner | V2 (upstream default from 0.29.0) |
 | Model served | `gemma-4-26B-A4B-it`, offline int4 group-32 |
 | Context | 131,072 |
-| KV pool | 394,408 tokens = 3.01× concurrency, from a 10.5 GiB `VLLM_KV_CACHE_MEMORY` pin |
+| KV pool | 356,893 tokens = 2.72× concurrency, from a 9.5 GiB `VLLM_KV_CACHE_MEMORY` pin |
+| Speculative decoding | on, Google's gemma-4 draft model with 3 tokens: about 1.7× faster decode — see [*Faster decode with a draft model*](#faster-decode-with-a-draft-model) |
 | Reasoning | on by default (`VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS={"enable_thinking":true}`); a request can still turn it off |
 | Attention | Intel's flash-attention kernel, so **text-only** — see [*Intel attention for gemma-4*](#intel-attention-for-gemma-4) and [PLUGIN.md](PLUGIN.md) |
 | Per-request stats | on — `metrics` in chat and completions responses; a stream needs `include_usage` |
@@ -56,7 +57,7 @@ same engine on the B60: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928
 - [`bench.sh` and `smoke.sh`](#benchsh-and-smokesh)
 - [Downstream consumers](#downstream-consumers)
 - [Per-request stats — TTFT and tok/s](#per-request-stats--ttft-and-toks)
-- [gemma-4 in depth](#gemma-4-in-depth) — checkpoint, context, prefill, Intel attention, prefix cache
+- [gemma-4 in depth](#gemma-4-in-depth) — checkpoint, context, prefill, Intel attention, draft model, prefix cache
 - [Qwen3.8-27B](#qwen38-27b) — checkpoint, Intel attention with images, measured against Triton
 - [Performance](#performance)
 - [Why it is configured this way](#why-it-is-configured-this-way)
@@ -130,6 +131,7 @@ silently degrades it.
 | `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. The gemma-4 block sets `{"enable_thinking":true}`, which turns reasoning on for every request; `null` leaves it to each request. Qwen3.8 thinks by default without it |
 | `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` asks for Intel's kernel. gemma-4 needs the next variable with it — see *Intel attention for gemma-4*. Qwen3.8 doesn't |
 | `VLLM_TEXT_ONLY_FLAG` | `--no-language-model-only` (default) or `--language-model-only`, which turns image input off. Passed whole, like `VLLM_EAGER_FLAG` |
+| `VLLM_SPECULATIVE_CONFIG` | `null` (default) is off. The gemma-4 block names Google's draft model and 3 draft tokens — see *Faster decode with a draft model*. The draft belongs to one model, so every other block sets `null` |
 
 Shell variables beat `.env`, but **only for the names you pass** — so the
 temporary-override block under *Switching models* has to set all of them, not
@@ -153,7 +155,7 @@ just `VLLM_MODEL`.
 | reasoning | always on, no off switch | opt-in per request | on by default, a request can turn it off |
 | large cold prompts | linear, fine | **quadratic on Triton — see warning**; fast with Intel attention | fast with Intel attention, slow on Triton |
 | image input | no | yes, unless Intel attention is on | yes, also with Intel attention |
-| decode on the B70 | not measured | 86 tok/s with Intel attention | 32.9 tok/s with Intel attention |
+| decode on the B70 | not measured | 137–156 tok/s with Intel attention and the draft model, 86 without the draft | 32.9 tok/s with Intel attention |
 
 Speed, first-token time and KV pool depend on the card, so they're in the card
 files: [B60](../INTEL_ARC_B60.md#measured-results) and
@@ -296,14 +298,15 @@ Expected in the container log:
 | model | log line |
 |---|---|
 | gpt-oss-20b | `Model loading took 12.87 GiB` |
-| gemma-4 | `Model loading took 15.76 GiB`, or 14.69 GiB with Intel attention |
+| gemma-4 | `Model loading took 15.76 GiB`, or 14.69 GiB with Intel attention, or 15.47 GiB with Intel attention and the draft model |
 | Qwen3.8-27B | `Model loading took 17.56 GiB` |
 
 The pool size comes next, as `XPU KV cache size: … tokens, Maximum concurrency
 for … tokens per request: …x` (earlier docs here quote it as `GPU KV cache
 size`). It depends
 on the card and the KV setting, so the figure to expect is in the card files:
-on the B70, gemma-4 shows 394,408 tokens and 3.01× with Intel attention.
+on the B70, gemma-4 shows 356,893 tokens and 2.72× with Intel attention and
+the draft model.
 
 For gemma-4 the log should also show the full quantization chain, which confirms
 the int4 kernels actually engaged rather than silently falling back:
@@ -471,7 +474,7 @@ response then carries a `metrics` object (streams need one more step, below):
 | `generation_time_ms` | First token to last token — decode only |
 | `mean_itl_ms` | Average gap between tokens during decode |
 | `tokens_per_second` | All generated tokens ÷ (prefill + decode) |
-| `speculative_decoding` | Draft-token stats. Always `null` here, since this engine runs no speculative decoding. Streams leave it out |
+| `speculative_decoding` | Draft-token stats. Stays `null` even with the draft model on, because vLLM fills it only when a separate setting, `per_request_spec_decode_metrics`, is turned on, and it isn't here. The engine log's `SpecDecoding metrics` lines carry the same numbers every 10 s. Streams leave it out |
 
 A real one, from gemma-4 on the Arc Pro B70 (2026-09-26, 29-token prompt, 193
 tokens back, thinking off, rounded):
@@ -784,6 +787,70 @@ layers can retrieve it.
 If vLLM starts asking the XPU kernels what they support, the plugin does nothing
 and can be deleted.
 
+### Faster decode with a draft model
+
+Google publishes a small "assistant" model for gemma-4,
+[`google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant`](https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant):
+4 layers, 0.42B parameters, 0.78 GiB. It guesses the next few tokens, and
+gemma-4 checks all of them in one pass instead of producing one token per pass.
+Wrong guesses are thrown away, so the answers come from gemma-4 exactly as
+before. Only the speed changes. Take the QAT variant: the `adeepv` checkpoint
+is built from Google's QAT weights, so the matching draft should guess better.
+
+Two lines in the gemma-4 block of `.env` switch it on:
+
+```dotenv
+VLLM_SPECULATIVE_CONFIG={"model":"google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant","num_speculative_tokens":3}
+VLLM_KV_CACHE_MEMORY=10200547328
+```
+
+Then `docker compose up -d`. The first boot downloads the draft. vLLM sees
+`model_type: gemma4_assistant` in its config and picks the MTP method itself,
+so there's no `"method"` key. The KV setting drops 1 GiB, from 10.5 to 9.5 GiB,
+to make room for the draft's weights. The draft adds no KV cache of its own: its
+layers have only query projections and read gemma-4's cache. The boot log
+shows it as four `Gemma4 MTP: draft layer N … -> language_model.model.layers.28`
+(and `.29`) lines.
+
+**Measured** on the B70 on 2026-10-03. Same checkpoint, Intel attention, 131,072
+context, compiled. Decode is the median of three 512-token answers (a story,
+code, an explanation) with thinking off, each set run twice:
+
+| | without | 3 draft tokens | 4 | 5 |
+|---|---|---|---|---|
+| decode, default sampling | 82.1 tok/s | **137–146** | 136 | 125 |
+| decode, temperature 0 | 86.6 tok/s | **156** | 155 | 152 |
+| 6 requests at once, total | 323 tok/s | **386** | — | — |
+| 16,853-token prompt: first token | 2.65 s | 3.05 s | — | — |
+| 16,853-token prompt: decode after it | 75.0 tok/s | **109.5** | — | — |
+| KV pool | 394,408 (3.01×) | 356,893 (2.72×) | same | same |
+| weights on the card | 14.69 GiB | 15.47 GiB | same | same |
+
+The gain depends on the text. Code is easiest to guess (167–175 tok/s) and the
+story hardest (109–117). The draft guesses well: about 2.75–3.05 tokens are
+accepted per pass, and its first, second and third guesses are right about 78%,
+55% and 43% of the time. With 4 or 5 tokens the extra guesses are wrong too
+often to pay for themselves, so 3 it is.
+
+With several requests at a time the gain shrinks to about 20%, because the GPU
+is already busy with the other requests. A long prompt's first token arrives
+about 0.4 s later. `smoke.sh` passed, and a code hidden in the 16,853-token
+prompt was found with and without the draft.
+
+Google [warns](https://ai.google.dev/gemma/docs/mtp/overview) that on the
+26B-A4B mixture-of-experts model the draft may not speed up a single request,
+since checking several tokens pulls in more experts. That didn't happen on
+this card.
+
+To turn it off, set `VLLM_SPECULATIVE_CONFIG=null`, put the KV setting back to
+`11274289152` and run `up -d`.
+
+**Tried and not worth it: a smaller output layer.** gemma-4 shares its 16-bit
+output layer with its embeddings, `[262144, 2816]`, 1.47 GB read for every
+token. A copy stored as FP8 made no measurable difference on top of the draft
+model (143–145 and 158 tok/s). As int4 with group size 32 it added about 5% (147–159 and 164)
+but slightly changes the model's output, and that wasn't measured.
+
 ### Prefix caching is what makes this usable
 
 Same prompt sent twice on a virgin engine:
@@ -956,8 +1023,9 @@ granularity:
 
 2.5× as many expert matrix multiplies per token, each ~4.1× narrower. Small
 matrices use the GPU poorly and each costs a launch. Compiled mode recovers part
-of that; the rest is architectural, and it sets the ceiling — there is no
-configuration that makes this model reach gpt-oss's rate.
+of that; the rest is architectural, and it sets the ceiling for one token per
+pass. The draft model gets around that ceiling by checking several tokens per
+pass — see *Faster decode with a draft model*.
 
 ### Standings against the scaler
 
@@ -1245,7 +1313,8 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 
 ## Open questions
 
-1. A genuine **concurrent-load** test — every concurrency figure here is
+1. A genuine **concurrent-load** test — apart from the 6-request run in
+   *Faster decode with a draft model*, every concurrency figure here is
    *allocated* capacity; `bench.sh` is single-stream.
 2. On Triton, a true **~131k prompt** has never completed end-to-end. The cap
    is boot-verified and exercised to ~64.7k; everything above that is the
@@ -1256,12 +1325,10 @@ port 8000, and if it's under a process supervisor it will come back by itself.
    `if current_platform.is_cuda():` — **not gated on XPU**. It would halve both KV
    terms (131k at ~2.3×, or the full 262,144 in budget), does nothing for prefill,
    and its accuracy cost is unmeasured. Needs a `--kv-cache-dtype` passthrough.
-4. **Speculative decoding, untested and the only real decode lever left.**
-   `gemma4_mtp` is a registered method, the proposer ships at
-   `vllm/v1/spec_decode/gemma4.py`, `platforms/xpu.py` has no guard against it,
-   and Google publishes a matching 0.84 GB assistant checkpoint. On the B60 it
-   needs the context cap down to ~96k or below to make VRAM room, and its
-   CUDA-graph path won't apply here.
+4. **Speculative decoding on the B60.** It's on and measured on the B70 (see
+   *Faster decode with a draft model*). On the B60 the draft's 0.78 GiB would
+   most likely have to come out of the 4.25 GiB KV setting, which means a
+   lower context cap (inferred, not booted).
 5. **File the V2 segfault upstream** — clean repro, no existing issue.
 6. **The head-512 capability gate** is worth reporting: the kernel is compiled,
    and only `head512_plugin/` makes it reachable. A fix upstream would let the
@@ -1270,8 +1337,9 @@ port 8000, and if it's under a process supervisor it will come back by itself.
    image tokens. vLLM's FLASH_ATTN path allows that only with FA4, and nobody
    has checked whether Intel's kernel could do it. See
    [PLUGIN.md](PLUGIN.md#the-drawback-no-image-input).
-8. **Concurrent load with Intel attention**, untested. Every figure in its table
-   is a single stream.
+8. **Heavier concurrent load with Intel attention.** The only measurement is 6
+   requests at a time, 512 tokens each (323 tok/s total, 386 with the draft
+   model).
 9. Whether `/dev/dri/by-path` is still needed at world_size=1.
 10. The stock `intel/vllm:0.21.0` baseline in `vllm_xpu/`, still unmeasured.
 
