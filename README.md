@@ -1,8 +1,6 @@
 # Local LLM stack
 
-> ⚠️ The only official source is [github.com/epsilonagentx/intel_arc_gpu_llm](https://github.com/epsilonagentx/intel_arc_gpu_llm); copies elsewhere are not maintained by me.
->
-> 💡 Using it? **Fork** the repo (don't just download a copy) and work on your own branch — that keeps you linked to upstream for updates and makes contributing back easy. See [how to fork a repo](https://docs.github.com/en/get-started/quickstart/fork-a-repo), or [fork this one directly](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork).
+> ⚠️ This is the only repository I maintain. Forks are welcome: [fork it on GitHub](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork) rather than downloading a copy, so you can pull updates and send changes back (see [CONTRIBUTING.md](CONTRIBUTING.md)). Other copies are not mine.
 
 Hardware: an Intel Arc Pro B60 (24 GB) or B70 (32 GB) on the `xe` driver. The
 settings that depend on the card, and what has been measured on each, are in
