@@ -83,7 +83,7 @@ request decoded at 54.8 tok/s, and six at once reached 201.6 tok/s in total,
 **Prefill on Triton is quadratic on this card:** 9,643 tokens took 26.3 s,
 31,957 took 305.3 s and 64,708 took 21.6 minutes. The fitted curve, prefix
 caching and the rest of gemma-4's detail are in
-[*gemma-4 in depth*](vllm_openai_xpu/README.md#gemma-4-in-depth), which was
+[vllm_openai_xpu/GEMMA_4_26B_A4B.md](vllm_openai_xpu/GEMMA_4_26B_A4B.md), which was
 measured on this card.
 
 ## Models that have run on the B60

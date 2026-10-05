@@ -100,8 +100,9 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
   > engine (`vllm_openai_xpu/`, v0.29.0 onward) from an offline int4 **group-32**
   > checkpoint, at 131,072 context. The XPU expert kernel accepts only group-32
   > or channelwise int4 — that narrowness, not a kernel gap, was the real
-  > constraint. See [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md),
-  > *gemma-4 in depth*. This *scaler /
+  > constraint. See
+  > [vllm_openai_xpu/GEMMA_4_26B_A4B.md](vllm_openai_xpu/GEMMA_4_26B_A4B.md).
+  > This *scaler /
   > `vllm_xpu` stack* still stays on gpt-oss-20b.
 - Reasoning trace field is still `message.reasoning`, not `reasoning_content`
   (re-verified on 0.21.0) — see [README.md](README.md) for the consumer-parsing

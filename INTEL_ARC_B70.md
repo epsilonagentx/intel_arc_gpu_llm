@@ -107,7 +107,7 @@ and from 86.6 to 156 at temperature 0. 6 requests at a time went from 323 to
 386 tok/s in total. After a 16,853-token prompt, decode went from 75.0 to
 109.5 tok/s, with the first token 0.4 s later. The KV pool is 356,893 tokens
 (2.72×). How it works, and the 4- and 5-token runs, are in
-[*Faster decode with a draft model*](vllm_openai_xpu/README.md#faster-decode-with-a-draft-model).
+[*Faster decode with a draft model*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#faster-decode-with-a-draft-model).
 
 **Against the B60, on the same Triton settings:** decode is about 1.30× faster
 (73.2 against 56.1–56.5 tok/s) and prefill 1.43–1.50× faster (11,782 tokens in
@@ -117,7 +117,7 @@ Prefill on Triton is still quadratic here, just quicker.
 **The KV formula holds on this card too.** The formula in the engine README
 predicts 2.877× concurrency at the 10.5 GiB setting and 131,072 context, and the
 log says 2.88×. See
-[*Context is nearly free*](vllm_openai_xpu/README.md#context-is-nearly-free--the-kv-formula).
+[*Context is nearly free*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#context-is-nearly-free--the-kv-formula).
 
 **XPU Graph doesn't help.** During a long single-request decode with Intel
 attention the GPU was 99–100% busy (watched with `sudo nvtop`), so there are no
@@ -143,7 +143,7 @@ the 8.0 GiB setting, compiled mode, true token counts, thinking off
 Intel attention is about 11% faster at decode than Triton, and about 15% faster
 than the scaler below. It also fits the full 131,072 context where the scaler
 fits 98,304. How to run it is in
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#qwen38-27b).
+[vllm_openai_xpu/QWEN3_8_27B.md](vllm_openai_xpu/QWEN3_8_27B.md).
 
 ## Measured: Qwen3.8-27B with MTP and an FP8 output layer
 
@@ -169,7 +169,7 @@ faster but shifts the next-token ranking measurably, with the same GSM8K
 score; the quality numbers are in
 [vllm_openai_xpu/tools/README.md](vllm_openai_xpu/tools/README.md#measured).
 How to set it up is in
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#faster-decode-mtp-and-an-fp8-output-layer).
+[vllm_openai_xpu/QWEN3_8_27B.md](vllm_openai_xpu/QWEN3_8_27B.md#faster-decode-mtp-and-an-fp8-output-layer).
 
 ## Measured: Qwen3.8-27B on the scaler
 

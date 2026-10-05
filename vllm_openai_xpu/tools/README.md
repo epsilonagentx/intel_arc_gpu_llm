@@ -16,8 +16,8 @@ This tool writes such a checkpoint next to the original.
 
 It was built and measured with `RedHatAI/Qwen3.8-27B-INT4` on an Arc Pro B70,
 and the steps below use that model. Why MTP helps at all, and how it's
-switched on, is in [../README.md](../README.md) *Faster decode: MTP and an
-FP8 output layer*.
+switched on, is in
+[../QWEN3_8_27B.md](../QWEN3_8_27B.md#faster-decode-mtp-and-an-fp8-output-layer).
 
 ## The three variants
 

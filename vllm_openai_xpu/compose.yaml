@@ -41,7 +41,8 @@ services:
       #   docker compose down && docker volume rm llm_vllm-openai-cache
       - vllm-openai-cache:/cache/vllm
       # vLLM plugin that lets FLASH_ATTN take head size 512 on XPU. Inert unless
-      # VLLM_ATTN_BACKEND=FLASH_ATTN. ./README.md "Intel attention for gemma-4"
+      # VLLM_ATTN_BACKEND=FLASH_ATTN.
+      # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"
       - ./head512_plugin:/opt/vllm-plugins:ro
     environment:
       HF_HOME: /cache/huggingface
@@ -53,8 +54,8 @@ services:
       SYCL_CACHE_PERSISTENT: "${SYCL_CACHE_PERSISTENT:-0}"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"    # platform auto-sets this; explicit for parity
       no_proxy: "localhost,127.0.0.1"
-      # Graph mode is single-GPU-only upstream and defaults OFF. Flipping this to
-      # 1 is the one speed lever this engine adds. ./README.md "Performance"
+      # Graph mode is single-GPU-only upstream and defaults OFF. Not worth it
+      # here: +0.5% on the B60, nothing on the B70. ./README.md "Performance"
       VLLM_XPU_ENABLE_XPU_GRAPH: "${VLLM_XPU_ENABLE_XPU_GRAPH:-0}"
       # V2 is upstream's default from 0.29.0 on, and MEASURED faster and leaner
       # here (+1.1% tok/s, non-torch 1.50 -> 1.03 GiB). 0 pins V1 for A/B work.
@@ -129,13 +130,13 @@ services:
       # runs gemma-4 on Intel's own kernel: much faster prefill, but no image
       # input. Qwen3.8 keeps images on FLASH_ATTN.
       # The text-only flag is passed whole, like VLLM_EAGER_FLAG.
-      # ./README.md "Intel attention for gemma-4"
+      # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"
       - "--attention-backend=${VLLM_ATTN_BACKEND:-auto}"
       - "${VLLM_TEXT_ONLY_FLAG:---no-language-model-only}"
       # Speculative decoding. `null` is off. gemma-4 uses Google's small draft
       # model; Qwen3.8 uses its own MTP head. Each about 1.7-2x faster decode.
-      # ./README.md "Faster decode with a draft model" (gemma-4) and
-      # "Faster decode: MTP and an FP8 output layer" (Qwen3.8)
+      # ./GEMMA_4_26B_A4B.md "Faster decode with a draft model" and
+      # ./QWEN3_8_27B.md "Faster decode: MTP and an FP8 output layer"
       - "--speculative-config=${VLLM_SPECULATIVE_CONFIG:-null}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
