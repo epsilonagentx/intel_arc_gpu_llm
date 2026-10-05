@@ -132,6 +132,10 @@ services:
       # ./README.md "Intel attention for gemma-4"
       - "--attention-backend=${VLLM_ATTN_BACKEND:-auto}"
       - "${VLLM_TEXT_ONLY_FLAG:---no-language-model-only}"
+      # Speculative decoding. `null` is off. gemma-4 uses Google's small
+      # draft model, which decodes about 1.7x faster on the B70.
+      # ./README.md "Faster decode with a draft model"
+      - "--speculative-config=${VLLM_SPECULATIVE_CONFIG:-null}"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 30s
