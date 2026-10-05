@@ -1,8 +1,6 @@
 # Local LLM stack
 
-> ⚠️ The only official source is [github.com/epsilonagentx/intel_arc_gpu_llm](https://github.com/epsilonagentx/intel_arc_gpu_llm); copies elsewhere are not maintained by me.
->
-> 💡 Using it? **Fork** the repo (don't just download a copy) and work on your own branch — that keeps you linked to upstream for updates and makes contributing back easy. See [how to fork a repo](https://docs.github.com/en/get-started/quickstart/fork-a-repo), or [fork this one directly](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork).
+> ⚠️ This is the only repository I maintain. Forks are welcome: [fork it on GitHub](https://github.com/epsilonagentx/intel_arc_gpu_llm/fork) rather than downloading a copy, so you can pull updates and send changes back (see [CONTRIBUTING.md](CONTRIBUTING.md)). Other copies are not mine.
 
 Hardware: an Intel Arc Pro B60 (24 GB) or B70 (32 GB) on the `xe` driver. The
 settings that depend on the card, and what has been measured on each, are in
@@ -116,8 +114,12 @@ several vLLM minors newer than the others and the only engine here whose kernels
 load gemma-4. Its guide covers the three models it's validated for (gemma-4,
 Qwen3.8-27B and gpt-oss-20b), and gemma-4's prefill trade-off: quadratic on the
 default Triton backend, and 16–28× faster with the Intel-attention switch, which
-costs image input —
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md).
+costs image input. Speculative decoding speeds up decode on top of that: about
+1.7× for gemma-4 with Google's small draft model, and 2× for Qwen3.8 with its
+own MTP head and an FP8 output layer —
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md), with a page per model:
+[gemma-4](vllm_openai_xpu/GEMMA_4_26B_A4B.md) and
+[Qwen3.8](vllm_openai_xpu/QWEN3_8_27B.md).
 
 **Benchmark before adopting any of them.** The win has to be measured on your own
 box, and the three sit on **different vLLM bases** (scaler → 0.26.0, stock →
