@@ -38,6 +38,7 @@ extrapolation, it says so.
 | Attention | Intel's flash-attention kernel, so **text-only** — see [*Intel attention for gemma-4*](#intel-attention-for-gemma-4) and [PLUGIN.md](PLUGIN.md) |
 | Per-request stats | on — `metrics` in chat and completions responses; a stream needs `include_usage` |
 | `smoke.sh` | ALL PASS, with reasoning on and off |
+| ⚠ Known issue | gemma-4 can get stuck thinking in long coding-agent sessions and repeat itself until the token limit — see [*Known issue: thinking loops in agent sessions*](#known-issue-thinking-loops-in-agent-sessions) |
 
 Kept as the cross-engine comparison point, measured for **gpt-oss-20b** on this
 same engine on the B60: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928 tokens
@@ -53,6 +54,7 @@ same engine on the B60: 83.5 tok/s @200, 83.1 @400, TTFT ~76 ms, KV pool 338,928
 - [Switching models](#switching-models)
 - [Verifying which model is live](#verifying-which-model-is-live)
 - [Reasoning / thinking](#reasoning--thinking)
+- [Known issue: thinking loops in agent sessions](#known-issue-thinking-loops-in-agent-sessions)
 - [Model naming](#model-naming)
 - [`bench.sh` and `smoke.sh`](#benchsh-and-smokesh)
 - [Downstream consumers](#downstream-consumers)
@@ -367,16 +369,20 @@ tokens, so 2.48× the wall-clock. On that particular problem the extra 600 token
 of trace changed the answer not at all, though that's one arithmetic question and
 not a quality evaluation; arithmetic is reasoning's weakest case.
 
-This is why the template leaves it off: reasoning is a cost you opt into for the
+That's why the compose default leaves it off, even though the gemma-4 block in
+`.env.example` turns it on: reasoning is a cost worth paying only for the
 requests that earn it. If you want graded control rather than a switch, it
 belongs at the gateway — route `enable_thinking` per consumer.
 
-> **There is no middle setting.** `enable_thinking` is binary. `reasoning_effort`
-> exists in vLLM 0.29.0 but only for DeepSeek-V4, and there is no
-> `thinking_budget` / `max_thinking_tokens` anywhere in the codebase. "Off" is a
-> designed mode rather than a degradation — the chat template pre-emits an
+> **The template has no middle setting.** `enable_thinking` is binary, and
+> `reasoning_effort` only applies to DeepSeek-V4. "Off" is a designed mode
+> rather than a degradation — the chat template pre-emits an
 > opened-and-immediately-closed thought channel, so the model *cannot* think
-> rather than being asked not to.
+> rather than being asked not to. vLLM 0.30.0 does add a per-request cap,
+> `thinking_token_budget`, and it works on gemma-4 with nothing more than the
+> `gemma4` reasoning parser. Measured: a budget of 64 gives exactly 64 reasoning
+> tokens and then the answer. The server has no default for it, so each request
+> has to send it.
 
 ### ⚠ Never use `max_tokens` as a thinking cap
 
@@ -385,11 +391,88 @@ get `finish_reason: length` and **zero answer characters** — not a truncated
 answer, nothing at all. Measured: a prompt with no clean solution burned **6,000
 tokens over 133 seconds and returned nothing.** With reasoning on, `max_tokens`
 must cover trace *plus* answer; allow 1500+ for ordinary work and more if the
-task might make the model search.
+task might make the model search. To cap the thinking itself, send
+`thinking_token_budget` instead (above).
 
 > `null` is the compose default for this variable, not `{}` — a brace inside a
 > `${VAR:-default}` breaks Compose interpolation. `json.loads("null")` is `None`,
 > which vLLM treats as no defaults.
+
+---
+
+## Known issue: thinking loops in agent sessions
+
+**Not fixed yet.** In long sessions with a coding agent, gemma-4 sometimes
+starts thinking and never stops, so the answer never comes. It goes on until
+the client gives up or the request's token limit runs out. The next request in
+the same session usually works fine. It has been seen on the B70 with Intel
+attention, with and without the draft model.
+
+**What the captured loops look like.** Five were caught on 3 and 4 October
+2026, with a coding agent (opencode) talking to the engine through a gateway:
+
+- All five were stuck in the thinking. None reached the answer or a tool call.
+- They started 25,000–55,000 tokens into the conversation, so it isn't only a
+  problem near the context limit.
+- Most came straight after a failed or broken file edit, at a point where the
+  model had to choose what to do next.
+- The model usually had the right idea in its first few hundred characters.
+  Then it kept reopening the decision ("Actually, I'll use `write`." / "Wait,
+  I'll check…") until it settled into a block of 54 to 357 characters that it
+  repeated word for word, 150–235 times.
+- While it loops, the draft model's guesses are accepted 98–100% of the time,
+  against 50–65% for normal text. The engine log's `SpecDecoding metrics` lines
+  show it. Copying a file word for word also gives about 100%, so this hints at
+  a loop but doesn't prove one.
+
+**Capping the thinking isn't enough on its own.** A temporary plugin gave every
+request a default `thinking_token_budget` of 4,096 (see *What reasoning actually
+costs* above). It did cut the loop, and the model then made a valid tool call.
+But the agent sends the model's reasoning back with each tool step, the chat
+template puts it into the next prompt, and the next step looped again within
+its first 1,000 characters. The cut-off loop seeded the next one. The plugin
+was taken out again, and nothing from it is in this repository.
+
+**The likely cause: the chat template feeds old reasoning back in.** gemma-4's
+template keeps the reasoning of every assistant step after the last user
+message and renders it as a thought block in the next prompt. In this
+checkpoint's `chat_template.jinja` that's lines 239–242:
+
+```jinja
+{%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}
+{%- set thinking_gate = (loop.index0 > ns_turn.last_user_idx) or (preserve_thinking and message.get('tool_calls')) -%}
+{%- if thinking_text and thinking_gate -%}
+    {{- '<|channel>thought\n' + thinking_text + '\n<channel|>' -}}
+```
+
+The first half of the gate is the one that fires here. The second half,
+`preserve_thinking`, is a template option that defaults to off. During a chain
+of tool calls there's no new user message, so each step sees all of its own
+earlier thinking again, and a loop can feed on itself. The design looks
+deliberate: it lets the model carry its reasoning through a tool chain.
+
+A Hugging Face discussion on Google's model page describes exactly this, and
+proposes a fix:
+
+- [*Chat template may re-inject prior-turn reasoning during multi-turn tool use → repetition loops*](https://huggingface.co/google/gemma-4-26B-A4B-it/discussions/48),
+  google/gemma-4-26B-A4B-it discussion #48, by ManniX-ITA. With the stock
+  template, 4 of 12 seeds of a multi-turn agent test looped. With the
+  re-injection switched off (`{%- if false and thinking_text … %}`), none did,
+  and code benchmarks held up (HumanEval+ 92.07%). That was measured on a
+  pruned derivative of the 26B-A4B, not on this checkpoint.
+- [The fixed template](https://huggingface.co/ManniX-ITA/gemma-4-A4B-98e-v7-coder-it-GGUF/blob/main/chat_template.fixed.jinja)
+  and [its unit test](https://huggingface.co/ManniX-ITA/gemma-4-A4B-98e-v7-coder-it-GGUF/blob/main/template_loop_unittest.py),
+  linked from that discussion.
+
+**Not tested here yet.** In this checkpoint's template, the same fix means
+changing line 241 to `{%- if false and thinking_text and thinking_gate -%}`.
+The edited copy would be passed to the server with `--chat-template`, so no
+client has to change. What it would cost is unknown: the model would no longer
+see its own reasoning from earlier steps in the same tool chain.
+
+**Until then:** stop the looping request; the next one normally works. Don't
+reach for repetition or frequency penalties as a workaround: they also push
+the model away from copying code exactly, which a coding agent depends on.
 
 ---
 
@@ -1296,6 +1379,7 @@ port 8000, and if it's under a process supervisor it will come back by itself.
 | `HTTP 404 ... model does not exist` | Stale `MODEL` in your shell, or the gateway still asks for the previous block's name. `bench.sh` prints what *is* served |
 | Reasoning field always empty | Two candidates: gemma-4 without `enable_thinking` (opt-in unless `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` sets it), or the client reading `reasoning_content` instead of `reasoning` |
 | Trace returned but no answer | Reasoning consumed the whole `max_tokens`. Raise it — and note a hard prompt can burn 6,000 tokens without closing the trace |
+| Thinking never ends and the same sentence repeats, in an agent session | The known gemma-4 thinking loop. Stop the request; the next one normally works. See *Known issue: thinking loops in agent sessions* |
 | OOM at boot | KV pin from the other model; `VLLM_KV_CACHE_MEMORY` is absolute and OOMs rather than shrinking |
 | `400` on long prompts | Above the cap. Every block runs 131,072; on gemma-4 the ceiling is 162,496 and costs no VRAM |
 | A big prompt seems to hang | Not hung — quadratic prefill on Triton. 9.6k ≈ 26 s, 32k ≈ 5 min, 64.7k ≈ 22 min (B60). Raise your client timeout, or switch on Intel attention if you can do without images |
@@ -1342,6 +1426,10 @@ port 8000, and if it's under a process supervisor it will come back by itself.
    model).
 9. Whether `/dev/dri/by-path` is still needed at world_size=1.
 10. The stock `intel/vllm:0.21.0` baseline in `vllm_xpu/`, still unmeasured.
+11. **gemma-4's thinking loops.** Does the template fix from Hugging Face
+    discussion #48 stop them on this checkpoint, and what does it cost? Also
+    whether the loops happen on Triton attention too. See *Known issue: thinking
+    loops in agent sessions*.
 
 ---
 
