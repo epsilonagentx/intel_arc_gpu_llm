@@ -209,6 +209,7 @@ VLLM_EAGER_FLAG=--enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
 VLLM_ATTN_BACKEND=auto \
 VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
+VLLM_SPECULATIVE_CONFIG=null \
 docker compose up -d
 ```
 
@@ -228,6 +229,7 @@ VLLM_EAGER_FLAG=--no-enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
 VLLM_ATTN_BACKEND=FLASH_ATTN \
 VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
+VLLM_SPECULATIVE_CONFIG=null \
 docker compose up -d
 ```
 
