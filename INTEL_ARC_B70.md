@@ -40,7 +40,7 @@ engine templates is the same on both cards.
 
 | Engine | Model | Context | KV memory | Mode |
 |---|---|---|---|---|
-| `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | 131,072 | `VLLM_KV_CACHE_MEMORY=11274289152` (10.5 GiB) | compiled |
+| `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM`, with the draft model | 131,072 | `VLLM_KV_CACHE_MEMORY=10200547328` (9.5 GiB); 10.5 GiB without the draft | compiled |
 | `vllm_openai_xpu/` | Qwen3.8-27B, `RedHatAI/Qwen3.8-27B-INT4` | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `vllm_openai_xpu/` | Qwen3.8-27B with MTP and an FP8 output layer | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `scaler/` | Qwen3.8-27B, int4 at load | 98,304 | `--gpu-memory-utilization 0.90`, no byte value | eager |
@@ -53,7 +53,9 @@ engine templates is the same on both cards.
 that would use all of it, here `--kv-cache-memory=11916317184` (11.1 GiB). That
 leaves only about 0.5 GiB spare, so the setting is 10.5 GiB, which keeps about
 1.1 GiB free for the compile buffers. Taking the line out of `.env` isn't
-enough for this: Compose then falls back to gpt-oss's B60 value.
+enough for this: Compose then falls back to gpt-oss's B60 value. The draft
+model adds 0.78 GiB of weights, so with it the setting drops by 1 GiB to
+9.5 GiB.
 
 **gpt-oss has no B70 value yet.** The B60 values should boot here, because they
 are smaller than the room this card has, but they would leave memory unused.
@@ -98,6 +100,14 @@ skipped (inferred).
 Intel attention is the plugin explained in
 [vllm_openai_xpu/PLUGIN.md](vllm_openai_xpu/PLUGIN.md), and image input is what
 it costs.
+
+**With the draft model on top** (2026-10-03, Intel attention, 3 draft tokens,
+9.5 GiB setting), decode went from 82.1 to 137–146 tok/s with default sampling
+and from 86.6 to 156 at temperature 0. 6 requests at a time went from 323 to
+386 tok/s in total. After a 16,853-token prompt, decode went from 75.0 to
+109.5 tok/s, with the first token 0.4 s later. The KV pool is 356,893 tokens
+(2.72×). How it works, and the 4- and 5-token runs, are in
+[*Faster decode with a draft model*](vllm_openai_xpu/README.md#faster-decode-with-a-draft-model).
 
 **Against the B60, on the same Triton settings:** decode is about 1.30× faster
 (73.2 against 56.1–56.5 tok/s) and prefill 1.43–1.50× faster (11,782 tokens in
@@ -185,7 +195,7 @@ A model is listed once it has actually booted and served requests on this card.
 
 | Model | Checkpoint | Quantization | Weights loaded | Engine | Context booted | Decode |
 |---|---|---|---|---|---|---|
-| gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | `vllm_openai_xpu` | 131,072 | 74 tok/s on Triton, 86 with Intel attention |
+| gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | `vllm_openai_xpu` | 131,072 | 74 tok/s on Triton, 86 with Intel attention, 137–156 with the draft model as well |
 | gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | int4 W4A16, group-32 | 16.82 GiB | `vllm_openai_xpu` | 131,072 | 68.4–69.9 tok/s on Triton |
 | Qwen3.8-27B | `RedHatAI/Qwen3.8-27B-INT4` | int4 W4A16, group-128 | 17.56 GiB | `vllm_openai_xpu` | 131,072 | 32.9 tok/s with Intel attention, 29.7 on Triton |
 | Qwen3.8-27B | the same, output layer converted to FP8 by `vllm_openai_xpu/tools/quantize_heads.py` | int4 W4A16, FP8 output layer | 17.18 GiB | `vllm_openai_xpu` | 131,072 | 65.8 tok/s greedy with MTP (3 drafts) |
@@ -196,9 +206,10 @@ A model is listed once it has actually booted and served requests on this card.
 
 - gpt-oss-20b on any of the three engines, and so a B70 KV value for it.
 - The stock `vllm_xpu/` engine at all.
-- More than one request at a time on gemma-4 or Qwen3.8. Every figure above is
-  a single request. Speculative decoding usually gains less when several
-  requests share the card (inferred, not tested here).
+- More than one request at a time on Qwen3.8, or more than 6 on gemma-4. Every
+  other figure above is a single request. Speculative decoding gains less when
+  several requests share the card: about 20% for gemma-4 at 6 requests, against
+  1.7× for one.
 - Power while decoding with Intel attention.
 - Models that fit 32 GB but not 24 GB, such as Qwen3.5/3.6-35B-A3B in AWQ
   (about 24 GB of weights). None has been tried.
