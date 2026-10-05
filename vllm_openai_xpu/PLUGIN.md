@@ -208,20 +208,20 @@ In this repo:
 - [*Why the slow kernel gets chosen*](GEMMA_4_26B_A4B.md#why-the-slow-kernel-gets-chosen)
   in the README, the full chain of checks
 
-In vLLM v0.30.0, the version this image is built from:
+In vLLM v0.31.0, the version this image is built from:
 
 - The head-size check the plugin wraps:
-  [`supports_head_size()`](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/v1/attention/backends/flash_attn.py#L373-L381)
+  [`supports_head_size()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/flash_attn.py#L420-L428)
 - The image-input check it leaves alone:
-  [`supports_mm_prefix()`](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/v1/attention/backends/flash_attn.py#L393-L395)
+  [`supports_mm_prefix()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/flash_attn.py#L440-L442)
 - Why FA4 always comes back "no" on Intel, the failed import:
-  [`is_fa_version_supported()`](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/v1/attention/backends/fa_utils.py#L271-L279)
+  [`is_fa_version_supported()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/fa_utils.py#L271-L279)
 - Why no setting can ask for another version, Intel is fixed at 2:
-  [`get_flash_attn_version()`](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/v1/attention/backends/fa_utils.py#L83-L84)
+  [`get_flash_attn_version()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/fa_utils.py#L83-L84)
 - The plugin loader:
-  [`load_general_plugins()`](https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/plugins/__init__.py#L77-L90)
+  [`load_general_plugins()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/plugins/__init__.py#L77-L90)
 - vLLM's own guide to plugins:
-  [Plugin System](https://github.com/vllm-project/vllm/blob/v0.30.0/docs/design/plugin_system.md)
+  [Plugin System](https://github.com/vllm-project/vllm/blob/v0.31.0/docs/design/plugin_system.md)
 
 The head-512 kernels themselves aren't on GitHub in readable form here; they
 are compiled into `libattn_kernels_xe_2.so` inside the image.

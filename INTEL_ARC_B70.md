@@ -119,9 +119,13 @@ predicts 2.877× concurrency at the 10.5 GiB setting and 131,072 context, and th
 log says 2.88×. See
 [*Context is nearly free*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#context-is-nearly-free--the-kv-formula).
 
-**XPU Graph doesn't help.** During a long single-request decode with Intel
-attention the GPU was 99–100% busy (watched with `sudo nvtop`), so there are no
-kernel-launch gaps for graphs to remove. Leave `VLLM_XPU_ENABLE_XPU_GRAPH` off.
+**XPU graphs are on from vLLM 0.31.0, and they fit.** Capture takes 0.74 GiB
+for gemma-4 and 0.96 GiB for Qwen3.8, next to the KV settings above, and
+makes gemma-4 decode about 8% faster after a long prompt. Qwen3.8 needs
+`VLLM_MAX_NUM_SEQS=128` for the capture. On 0.30.0, with graphs off, the GPU
+was already 99–100% busy during decode, which is why short prompts barely
+change. The 0.30.0 → 0.31.0 comparison is in
+[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#0300--0310).
 
 ## Measured: Qwen3.8-27B on the upstream engine
 
