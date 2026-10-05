@@ -5,7 +5,7 @@ text files. It removes one check that stops gemma-4 from using Intel's own
 attention kernel, and that is all it does. It doesn't change any file in the
 image, it doesn't install anything, and on its own it doesn't switch anything
 on. The two `.env` lines in
-[*Intel attention for gemma-4*](README.md#intel-attention-for-gemma-4) do the
+[*Intel attention for gemma-4*](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4) do the
 switching; the plugin is what makes that switch possible.
 
 ## The problem it solves
@@ -66,8 +66,8 @@ refused at that same check, and vLLM fixes Intel GPUs at FlashAttention version 
 before it looks at any version setting. Changing the code was the only way in.
 
 It was worth it. On the B70, prefill got 16–28× faster and decode about 16%
-faster. The full numbers are in the
-[README](README.md#intel-attention-for-gemma-4).
+faster. The full numbers are in
+[GEMMA_4_26B_A4B.md](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4).
 
 ## What's in the folder
 
@@ -163,8 +163,8 @@ than silent. (That last part is from reading the source; it hasn't been tried.)
 
 ## After an image upgrade
 
-Check the boot log before trusting the numbers. The README lists what to look
-for under [*Intel attention for gemma-4*](README.md#intel-attention-for-gemma-4).
+Check the boot log before trusting the numbers. GEMMA_4_26B_A4B.md lists what
+to look for under [*Intel attention for gemma-4*](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4).
 In short: the `xpu_head512` line means the plugin loaded,
 `Using Flash Attention backend.` means it took effect, and there must be no
 `XPU kernel not compiled … falling back` warning. That warning means a kernel
@@ -205,7 +205,7 @@ In this repo:
 - [`head512_plugin/vllm_xpu_head512.py`](head512_plugin/vllm_xpu_head512.py)
 - [`head512_plugin/vllm_xpu_head512-1.0.dist-info/entry_points.txt`](head512_plugin/vllm_xpu_head512-1.0.dist-info/entry_points.txt)
 - [`compose.yaml`](compose.yaml), the plugin mount and `PYTHONPATH`
-- [*Why the slow kernel gets chosen*](README.md#why-the-slow-kernel-gets-chosen)
+- [*Why the slow kernel gets chosen*](GEMMA_4_26B_A4B.md#why-the-slow-kernel-gets-chosen)
   in the README, the full chain of checks
 
 In vLLM v0.30.0, the version this image is built from:

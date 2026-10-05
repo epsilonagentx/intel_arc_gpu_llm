@@ -6,7 +6,7 @@ compiled head-512 kernels (prefill `chunk_policy_head512`, decode
 `paged_decode_kernel_template_q8_h512_p64`), so on XPU this allows exactly 512.
 
 On its own it changes nothing: gemma-4 still gets TRITON_ATTN unless the server
-is started with `--attention-backend=FLASH_ATTN`. See ../README.md,
+is started with `--attention-backend=FLASH_ATTN`. See ../GEMMA_4_26B_A4B.md,
 "Intel attention for gemma-4".
 """
 

@@ -152,7 +152,7 @@ ALL PASS. The details, including why 128k didn't fit, are in
 out and the other in. The served name changes to `qwen3.8-27b`, so clients asking
 for `gpt-oss-20b` stop working until you switch back. The upstream engine runs
 the same model faster, with the full 131,072 context; see
-[vllm_openai_xpu/README.md](../vllm_openai_xpu/README.md#qwen38-27b).
+[vllm_openai_xpu/QWEN3_8_27B.md](../vllm_openai_xpu/QWEN3_8_27B.md).
 
 ### What this image can serve that the stock one cannot
 

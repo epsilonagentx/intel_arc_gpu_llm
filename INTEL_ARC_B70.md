@@ -42,6 +42,7 @@ engine templates is the same on both cards.
 |---|---|---|---|---|
 | `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM`, with the draft model | 131,072 | `VLLM_KV_CACHE_MEMORY=10200547328` (9.5 GiB); 10.5 GiB without the draft | compiled |
 | `vllm_openai_xpu/` | Qwen3.8-27B, `RedHatAI/Qwen3.8-27B-INT4` | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
+| `vllm_openai_xpu/` | Qwen3.8-27B with MTP and an FP8 output layer | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `scaler/` | Qwen3.8-27B, int4 at load | 98,304 | `--gpu-memory-utilization 0.90`, no byte value | eager |
 | `vllm_openai_xpu/` | gpt-oss-20b | — | not measured | — |
 | `scaler/` | gpt-oss-20b | — | not measured | — |
@@ -106,7 +107,7 @@ and from 86.6 to 156 at temperature 0. 6 requests at a time went from 323 to
 386 tok/s in total. After a 16,853-token prompt, decode went from 75.0 to
 109.5 tok/s, with the first token 0.4 s later. The KV pool is 356,893 tokens
 (2.72×). How it works, and the 4- and 5-token runs, are in
-[*Faster decode with a draft model*](vllm_openai_xpu/README.md#faster-decode-with-a-draft-model).
+[*Faster decode with a draft model*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#faster-decode-with-a-draft-model).
 
 **Against the B60, on the same Triton settings:** decode is about 1.30× faster
 (73.2 against 56.1–56.5 tok/s) and prefill 1.43–1.50× faster (11,782 tokens in
@@ -116,7 +117,7 @@ Prefill on Triton is still quadratic here, just quicker.
 **The KV formula holds on this card too.** The formula in the engine README
 predicts 2.877× concurrency at the 10.5 GiB setting and 131,072 context, and the
 log says 2.88×. See
-[*Context is nearly free*](vllm_openai_xpu/README.md#context-is-nearly-free--the-kv-formula).
+[*Context is nearly free*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#context-is-nearly-free--the-kv-formula).
 
 **XPU Graph doesn't help.** During a long single-request decode with Intel
 attention the GPU was 99–100% busy (watched with `sudo nvtop`), so there are no
@@ -142,7 +143,33 @@ the 8.0 GiB setting, compiled mode, true token counts, thinking off
 Intel attention is about 11% faster at decode than Triton, and about 15% faster
 than the scaler below. It also fits the full 131,072 context where the scaler
 fits 98,304. How to run it is in
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#qwen38-27b).
+[vllm_openai_xpu/QWEN3_8_27B.md](vllm_openai_xpu/QWEN3_8_27B.md).
+
+## Measured: Qwen3.8-27B with MTP and an FP8 output layer
+
+Same engine, checkpoint and context, with MTP speculative decoding (3 draft
+tokens) and the output layer converted to FP8 (2026-10-03). The MTP rows with
+a 16-bit or FP8 output layer ran at a 7.0 GiB KV setting, the int4 row at
+8.0 GiB; the FP8 set measured the same at 8.0 GiB within noise. Three
+different prompts, each sent once, 512 tokens, thinking off, median per run:
+
+| | default sampling | greedy |
+|---|---|---|
+| no MTP | 32.2 tok/s | 32.9 tok/s |
+| MTP, 16-bit output layer | 53.9, 53.4 tok/s | 54.8, 56.5 tok/s |
+| **MTP, FP8 output layer** | **58.9, 53.1, 60.3 tok/s** | **67.3, 64.8, 65.3 tok/s** |
+| MTP, int4 output layer and draft head | 71.5, 72.2 tok/s | 73.9, 73.5 tok/s |
+
+Weights take 17.18 GiB. At the 8.0 GiB setting the KV pool is 208,093 tokens
+(1.59×) and the card sits at about 31,000 of 32,656 MiB, steady through a
+56,620-token prompt and four requests at once. At 7.0 GiB it's 181,068 tokens
+(1.38×) with about 1 GiB more headroom. Greedy answers are byte-identical to
+the 16-bit output layer, and `smoke.sh` passes. The int4 output layer is
+faster but shifts the next-token ranking measurably, with the same GSM8K
+score; the quality numbers are in
+[vllm_openai_xpu/tools/README.md](vllm_openai_xpu/tools/README.md#measured).
+How to set it up is in
+[vllm_openai_xpu/QWEN3_8_27B.md](vllm_openai_xpu/QWEN3_8_27B.md#faster-decode-mtp-and-an-fp8-output-layer).
 
 ## Measured: Qwen3.8-27B on the scaler
 
@@ -171,6 +198,8 @@ A model is listed once it has actually booted and served requests on this card.
 | gemma-4-26B-A4B-it | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM` | int4 W4A16, group-32 | 15.76 GiB | `vllm_openai_xpu` | 131,072 | 74 tok/s on Triton, 86 with Intel attention, 137–156 with the draft model as well |
 | gemma-4-26B-A4B-it | `reinforce20001/gemma4-26b-a4b-it-qat-w4a16-ct` | int4 W4A16, group-32 | 16.82 GiB | `vllm_openai_xpu` | 131,072 | 68.4–69.9 tok/s on Triton |
 | Qwen3.8-27B | `RedHatAI/Qwen3.8-27B-INT4` | int4 W4A16, group-128 | 17.56 GiB | `vllm_openai_xpu` | 131,072 | 32.9 tok/s with Intel attention, 29.7 on Triton |
+| Qwen3.8-27B | the same, output layer converted to FP8 by `vllm_openai_xpu/tools/quantize_heads.py` | int4 W4A16, FP8 output layer | 17.18 GiB | `vllm_openai_xpu` | 131,072 | 65.8 tok/s greedy with MTP (3 drafts) |
+| Qwen3.8-27B | the same, output layer and draft head converted to int4 (`--head int4 --mtp-int4`) | int4 W4A16 throughout | 15.8 GiB | `vllm_openai_xpu` | 131,072 | 73.7 tok/s greedy with MTP (3 drafts) |
 | Qwen3.8-27B | `Qwen/Qwen3.8-27B` | int4 at load (`sym_int4`) | 17.83 GiB | `scaler` | 98,304 | 28.7 tok/s |
 
 ## Not measured yet
@@ -178,7 +207,9 @@ A model is listed once it has actually booted and served requests on this card.
 - gpt-oss-20b on any of the three engines, and so a B70 KV value for it.
 - The stock `vllm_xpu/` engine at all.
 - More than one request at a time on Qwen3.8, or more than 6 on gemma-4. Every
-  other figure above is a single request.
+  other figure above is a single request. Speculative decoding gains less when
+  several requests share the card: about 20% for gemma-4 at 6 requests, against
+  1.7× for one.
 - Power while decoding with Intel attention.
 - Models that fit 32 GB but not 24 GB, such as Qwen3.5/3.6-35B-A3B in AWQ
   (about 24 GB of weights). None has been tried.
