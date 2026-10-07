@@ -63,6 +63,13 @@ pinned, compiled mode's buffers starve the KV pool and the boot dies 0.21 GiB
 short of 131,072. On the scaler, eager is mandatory for a different reason:
 compiled mode boots and then returns empty answers.
 
+**vLLM 0.31.0 hasn't been booted on this card.** It captures XPU graphs in
+compiled mode and has no switch to turn them off apart from eager mode. On
+0.30.0, graphs took 1.54 GiB here and didn't fit next to gemma-4's 4.25 GiB
+KV setting at 131,072 context. If a 0.31.0 boot fails at graph capture, use
+`VLLM_EAGER_FLAG=--enforce-eager` (about 7% slower decode for gemma-4) or stay
+on the `v0.30.0` image.
+
 ## Measured results
 
 | Engine | Model | Decode | First token | KV pool |

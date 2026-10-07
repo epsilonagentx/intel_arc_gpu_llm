@@ -45,7 +45,7 @@ measured here:
 ```bash
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -e HF_HOME=/cache/huggingface -v ~/models/hf:/cache/huggingface \
-  --entrypoint hf vllm/vllm-openai-xpu:v0.30.0 \
+  --entrypoint hf vllm/vllm-openai-xpu:v0.31.0 \
   download RedHatAI/Qwen3.8-27B-INT4 \
   --revision 91bd022d5b49442a868bc35008f6c21e1860edfa
 ```
@@ -58,7 +58,7 @@ other variants. It takes a few minutes and about 16 GB of disk:
 ```bash
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v ~/models/hf:/cache/huggingface -v "$PWD":/work:ro \
-  --entrypoint python3 vllm/vllm-openai-xpu:v0.30.0 \
+  --entrypoint python3 vllm/vllm-openai-xpu:v0.31.0 \
   /work/tools/quantize_heads.py RedHatAI/Qwen3.8-27B-INT4
 ```
 

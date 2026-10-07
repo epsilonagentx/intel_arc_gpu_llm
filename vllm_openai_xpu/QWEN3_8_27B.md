@@ -54,12 +54,12 @@ explicitly anyway, so the choice is visible. In the log you should see
 tokens`: vLLM makes the attention blocks large enough to hold the
 linear-attention state, and this is normal.
 
-The log also mentions Triton and even CUDA, and none of it means attention fell
-back. `Using Triton/FLA GDN prefill kernel` and `GDN decode kernel: cuda` come
-from shared setup code that runs on every platform. On XPU the linear-attention
-layers then call Intel's own kernel (`torch.ops._xpu_C.gdn_attention`) instead.
-`Warmed M-RoPE Triton kernels` is the position encoding, a small step outside
-attention. All of this is read from the v0.30.0 source.
+The log also mentions Triton (`Warming up Qwen GDN Triton kernels`), and that
+doesn't mean attention fell back. On XPU the linear-attention layers run their
+XPU path, which calls Intel's own kernel (`torch.ops._xpu_C.gdn_attention`),
+and 0.31.0 says so with `GDN decode kernel: XPU` (0.30.0 printed "cuda" there
+even on XPU). `Warmed M-RoPE Triton kernels` is the position encoding, a small
+step outside attention. This is read from the v0.31.0 source.
 
 ## Measured against Triton
 
@@ -120,7 +120,13 @@ int4 draft head, and an int4 output layer) are in
 VLLM_MODEL=/cache/huggingface/local/Qwen3.8-27B-INT4-fp8head
 VLLM_SPECULATIVE_CONFIG={"method":"mtp","num_speculative_tokens":3}
 VLLM_KV_CACHE_MEMORY=8603448832
+VLLM_MAX_NUM_SEQS=128
 ```
+
+`VLLM_MAX_NUM_SEQS=128` is needed from vLLM 0.31.0 on, with or without MTP:
+0.31.0 captures XPU graphs, and the capture needs one linear-attention state
+block per request vLLM allows at once. The 8.0 GiB KV setting holds 154, so
+the default of 256 stops the boot.
 
 The KV value stays at 8.0 GiB, the same as without MTP: the pool is 208,093
 tokens (1.59× at 131,072) and the card sits at about 31,000 of 32,656 MiB.
