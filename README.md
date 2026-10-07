@@ -42,7 +42,7 @@ bites. Pick one and start there:
 |---|---|---|---|
 | [`vllm_xpu/`](vllm_xpu/README.md) | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
 | [`scaler/`](scaler/README.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s on the B60) |
-| [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.30.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
+| [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.31.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
 
 **One GPU → exactly one engine at a time.** Each needs 13–16 GiB of weights plus
 its KV pool; together they OOM. Every command targets a folder, so you can't
@@ -114,7 +114,7 @@ several vLLM minors newer than the others and the only engine here whose kernels
 load gemma-4. Its guide covers the three models it's validated for (gemma-4,
 Qwen3.8-27B and gpt-oss-20b), and gemma-4's prefill trade-off: quadratic on the
 default Triton backend, and 16–28× faster with the Intel-attention switch, which
-costs image input. Speculative decoding speeds up decode on top of that: about
+keeps image input from vLLM 0.31.0 on. Speculative decoding speeds up decode on top of that: about
 1.7× for gemma-4 with Google's small draft model, and 2× for Qwen3.8 with its
 own MTP head and an FP8 output layer —
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md), with a page per model:
@@ -123,7 +123,7 @@ own MTP head and an FP8 output layer —
 
 **Benchmark before adopting any of them.** The win has to be measured on your own
 box, and the three sit on **different vLLM bases** (scaler → 0.26.0, stock →
-0.21.0, upstream → 0.30.0), so any difference mixes a fork's optimisations with an
+0.21.0, upstream → 0.31.0), so any difference mixes a fork's optimisations with an
 engine-version gap. Compare at equal `max_tokens`, and discard the first run after
 a cold start or a long idle — otherwise the numbers lie. The hygiene rules are in
 [scaler/README.md](scaler/README.md).

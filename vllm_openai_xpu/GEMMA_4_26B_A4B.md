@@ -8,7 +8,7 @@ Starting, switching models and the settings every model shares are in
 | | |
 |---|---|
 | Checkpoint | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM`, int4 group-32, 15.76 GiB |
-| Attention | Intel's kernel through [`head512_plugin/`](PLUGIN.md), so **text-only** |
+| Attention | Intel's kernel through [`head512_plugin/`](PLUGIN.md), with image input |
 | Speculative decoding | Google's draft model, 3 tokens: 137–156 tok/s on the B70 |
 | Context | 131,072; extra context costs almost no memory |
 | Reasoning | on by default in the `.env.example` block |
@@ -64,7 +64,8 @@ correctly, so the long context really works.
 > **⚠ Raising `--max-num-batched-tokens` lowers the context ceiling.** It
 > enlarges the sliding layers' reservation: at 8192 the fixed block grows from
 > 1.235 to 3.568 GB and the B60's ceiling falls to 48,576. Leave it at the
-> default (2496).
+> default: 2496 with image input on, which vLLM raises from its 2048 so one
+> video input fits a batch, and 2048 with `--language-model-only`.
 
 When sizing any hybrid model like this, per-token KV figures mislead. Read
 `layer_types`, `sliding_window`, `num_key_value_heads` **and**
@@ -82,8 +83,8 @@ timeouts along the whole path allow for it.
 ## ⚠ Prefill on Triton is quadratic
 
 On the default Triton backend, prefill time, not VRAM, limits usable context.
-[Intel attention](#intel-attention-for-gemma-4) removes the problem if you can
-do without image input. Measured on the B60 (the B70 is 1.4–1.5× faster):
+[Intel attention](#intel-attention-for-gemma-4) removes the problem. Measured on
+the B60 (the B70 is 1.4–1.5× faster):
 
 | cold prompt | wall |
 |---|---|
@@ -115,30 +116,25 @@ through the check and the source.
 
 ## Intel attention for gemma-4
 
-Two lines in `.env` put gemma-4 on Intel's head-512 kernel instead of Triton:
+One line in `.env` puts gemma-4 on Intel's head-512 kernel instead of Triton:
 
 ```dotenv
 VLLM_ATTN_BACKEND=FLASH_ATTN
-VLLM_TEXT_ONLY_FLAG=--language-model-only
 ```
 
-Then `docker compose up -d`. To go back, comment both out and run `up -d` again.
-
-**What it costs: image input.** gemma-4 attends to image tokens in both
-directions, which vLLM supports only on FlashAttention 4 or Triton.
-`--language-model-only` turns image input off, and that makes FLASH_ATTN
-eligible. Setting only `VLLM_ATTN_BACKEND` fails the boot with *"mm_prefix
-(PrefixLM bidirectional attention) requires FlashAttention v4"* (read from the
-source, not boot-tested).
+Then `docker compose up -d`. To go back, set it to `auto` and run `up -d` again.
+Image input keeps working from vLLM 0.31.0 on; see
+[*Images with Intel attention*](#images-with-intel-attention) below.
 
 **How it works.** `head512_plugin/` makes FLASH_ATTN accept head size 512 on
 XPU, and changes nothing else: with the switch off gemma-4 still gets Triton.
 Compose mounts it and puts it on `PYTHONPATH`, so every vLLM process loads it.
 [PLUGIN.md](PLUGIN.md) walks through it file by file.
 
-**Measured** on the B70 on 2026-09-30. Both columns use the same checkpoint, the
-131,072 context cap, the 10.5 GiB KV pin and the same scripts, with true token
-counts:
+**Measured** on the B70 on 2026-09-30, on vLLM 0.30.0. Both columns use the same
+checkpoint, the 131,072 context cap, the 10.5 GiB KV pin and the same scripts,
+with true token counts. On 0.30.0 Intel attention ran only with
+`--language-model-only`, so that column is text-only:
 
 | | Triton (switch off) | Intel attention |
 |---|---|---|
@@ -148,7 +144,10 @@ counts:
 | 16,049-token prompt: first token | 51.1 s | **2.5 s** |
 | 16,049-token prompt: decode after it | 38.1 tok/s | **74.8 tok/s** |
 | KV pool | 376,999 tokens (2.88×) | 394,408 tokens (3.01×) |
-| image input | yes | no |
+| image input | yes | no (0.30.0) |
+
+The larger pool on the right comes from running text-only, not from the
+kernel; see the next section.
 
 Longer prompts, with Intel attention: 67,956 tokens in 17.8 s and 129,331 in
 51.7 s. Triton took about 13 minutes for 60,924 tokens on the same card.
@@ -169,6 +168,93 @@ window, so only the head-512 layers could have found it.
   reference path when a kernel variant is missing, and that line is the only
   sign.
 
+### Images with Intel attention
+
+gemma-4 lets the tokens of one image look at each other in both directions,
+and vLLM applies that rule only on Triton or FlashAttention 4.
+[PLUGIN.md](PLUGIN.md#images-and-the-left-to-right-rule) explains the rule. On
+0.30.0 asking for FLASH_ATTN with images on stopped the boot, so Intel
+attention needed `--language-model-only` and cost image input.
+
+From 0.31.0, vLLM boots it anyway when FLASH_ATTN is asked for by name, reads
+the image tokens left to right like text, and says so in the log:
+
+```
+Using Flash Attention on XPU for a multimodal prefix-LM model because it was
+explicitly requested. The prefix-LM bidirectional mask cannot be applied, so
+image/video inputs will produce incorrect results
+```
+
+**Measured, the answers didn't change.** On the B70 on 2026-10-06, nine test
+images went to both backends with images on, the draft model on, temperature 0,
+thinking off, each sent twice: an invoice, serial numbers, a 3×3 and a 5×5 grid
+of coloured shapes, 13 and 27 dots, a bar chart, an 8×8 grid of letters and a
+small-print log. Each answer was checked for the expected values:
+
+| | Triton | Intel attention |
+|---|---|---|
+| easy five images | 48/48 | 48/48 |
+| hard four images | 18/22 | 18/22 |
+| missed on both | one column of the letter grid, 29 dots | one column of the letter grid, 26 dots |
+| KV pool (9.5 GiB setting) | 341,080 tokens | 340,227 tokens |
+
+A likely reason, not proven: the image encoder already lets the parts of a
+picture see each other before its tokens reach the language model, so reading
+them left to right there loses little. Nine synthetic images are a small test.
+Real photos haven't been tried, and many images per request were tested only
+for memory (below), not for the answers.
+
+**What image input costs.** The image encoder's weights take about 1 GiB of
+card memory. That comes out of the free memory, not the KV setting, which
+was 9.5 GiB in both of these boots. The KV pool still holds 4.7% fewer tokens, 340,227 instead
+of 356,893 with the draft model. The likely reason, inferred: with images on
+vLLM raises the per-step budget from 2048 to 2496 tokens, and that enlarges
+the sliding layers' reservation, as in the warning under
+[*Context is nearly free*](#context-is-nearly-free--the-kv-formula).
+
+Reading images needs almost no memory beyond that. vLLM encodes at most 2,496
+tokens of images per step (about 9 images) and sets that aside at boot. On the
+B70 the engine grew by 0.10 GiB on the first image request and then stayed flat
+through 480 images in one request (128,671 tokens, read in 113.8 s), 6
+requests at once with 40 images each, and 4 at once with 20 images and long
+text. nvtop showed 1.92 GiB of the card still free afterwards.
+
+**The KV setting is 11.0 GiB because of that free memory.** With images on and
+the draft model, `VLLM_KV_CACHE_MEMORY=11811160064` gives 393,915 tokens
+(3.01×). It was set by a load test, not by vLLM's own profiling. At that value
+the engine sets aside less working memory at boot and claims the rest under
+load, and PyTorch keeps it until the next restart:
+
+| load, 11.0 GiB setting | engine memory | free on the card (nvtop) |
+|---|---|---|
+| idle after boot | 29.89 GiB | 2.10 GiB |
+| 480 images in one request | 31.03 GiB | about 0.85 GiB (computed) |
+| 64 requests at once | 31.40 GiB | about 0.5 GiB (computed) |
+| 256 requests at once, the most the engine takes | 31.61 GiB | **0.24 GiB** |
+
+Every request succeeded, but 0.24 GiB is a thin margin. A heavier mix, for
+example many requests at once that all carry images, hasn't been tried, and if
+the engine runs out of memory it stays down. `11274289152` (10.5 GiB) leaves
+about 0.5 GiB more (inferred) for about 4% fewer tokens.
+
+Decode speed didn't change (draft model on, both 0.31.0):
+
+| | images on | text-only (10-05) |
+|---|---|---|
+| decode, default sampling | 106–152 tok/s, average 130 | 128–141 |
+| decode, temperature 0 | 117–183 tok/s, average 147 | 149 |
+| decode right after an image | 171–178 tok/s | — |
+| 6 requests at once, total | 393 tok/s | 389–397 |
+
+The text-only column is from the day before with other prompts, so the single
+rows are only comparable as ranges. With the draft model the rate depends on
+the text, which is why each prompt lands somewhere else. 6 requests at once is
+the cleanest comparison.
+
+To go text-only for the larger pool, add
+`VLLM_TEXT_ONLY_FLAG=--language-model-only` and run `up -d`. Images then get
+`400 At most 0 image(s) may be provided in one prompt`.
+
 ## Faster decode with a draft model
 
 Google publishes a small "assistant" model for gemma-4,
@@ -183,13 +269,15 @@ Two lines in the gemma-4 block of `.env` switch it on:
 
 ```dotenv
 VLLM_SPECULATIVE_CONFIG={"model":"google/gemma-4-26B-A4B-it-qat-q4_0-unquantized-assistant","num_speculative_tokens":3}
-VLLM_KV_CACHE_MEMORY=10200547328
+VLLM_KV_CACHE_MEMORY=11811160064
 ```
 
 Then `docker compose up -d`. The first boot downloads the draft. vLLM sees
 `model_type: gemma4_assistant` in its config and picks the MTP method itself,
-so there's no `"method"` key. The KV setting drops 1 GiB, from 10.5 to 9.5 GiB,
-to make room for the draft's weights. The draft adds no KV cache of its own: its
+so there's no `"method"` key. The draft's weights take 0.78 GiB. The runs
+below used a 9.5 GiB KV setting to make room for them; a later load test
+showed 11.0 GiB fits too, with a thin margin (see
+[*Images with Intel attention*](#images-with-intel-attention)). The draft adds no KV cache of its own: its
 layers have only query projections and read gemma-4's cache. The boot log
 shows it as four `Gemma4 MTP: draft layer N … -> language_model.model.layers.28`
 (and `.29`) lines.
@@ -205,7 +293,7 @@ code, an explanation) with thinking off, each set run twice:
 | 6 requests at once, total | 323 tok/s | **386** | — | — |
 | 16,853-token prompt: first token | 2.65 s | 3.05 s | — | — |
 | 16,853-token prompt: decode after it | 75.0 tok/s | **109.5** | — | — |
-| KV pool | 394,408 (3.01×) | 356,893 (2.72×) | same | same |
+| KV pool, text-only | 394,408 (3.01×) | 356,893 (2.72×) | same | same |
 | weights on the card | 14.69 GiB | 15.47 GiB | same | same |
 
 The gain depends on the text. Code is easiest to guess (167–175 tok/s) and the
@@ -223,6 +311,11 @@ Google [warns](https://ai.google.dev/gemma/docs/mtp/overview) that on the
 26B-A4B mixture-of-experts model the draft may not speed up a single request,
 since checking several tokens pulls in more experts. That didn't happen on
 this card.
+
+This run was text-only. With image input on, the pool with the draft model is
+340,227 tokens (2.60×) at 9.5 GiB and 393,915 (3.01×) at the 11.0 GiB default;
+see
+[*Images with Intel attention*](#images-with-intel-attention).
 
 To turn it off, set `VLLM_SPECULATIVE_CONFIG=null`, put the KV setting back to
 `11274289152` and run `up -d`.
@@ -355,10 +448,12 @@ the model away from copying code exactly, which a coding agent depends on.
    booted).
 4. **Report the head-512 check upstream.** The kernel is compiled in, and only
    `head512_plugin/` makes it reachable. A fix upstream would let the plugin go.
-5. **Image input with Intel attention.** It needs bidirectional attention over
-   image tokens, which vLLM's FLASH_ATTN path allows only on FA4. Nobody has
-   checked whether Intel's kernel could do it. See
-   [PLUGIN.md](PLUGIN.md#the-drawback-no-image-input).
+5. **Images on Intel attention, beyond nine test images.** The image tokens
+   are read left to right, and nine synthetic images gave the same answers as
+   Triton. Real photos, several images per request and video are untested.
+   vLLM 0.31.0 has a backend that sends image batches to Triton and the rest
+   to Flash Attention (`TRITON_FLASH_ATTN`), but only for NVIDIA. See
+   [PLUGIN.md](PLUGIN.md#images-and-the-left-to-right-rule).
 6. **gemma-4's thinking loops.** Does the template fix from Hugging Face
    discussion #48 stop them on this checkpoint, and what does it cost? Do the
    loops happen on Triton attention too? See *Known issue: thinking loops in
