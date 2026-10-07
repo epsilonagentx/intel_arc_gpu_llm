@@ -4,8 +4,8 @@
 text files. It removes one check that stops gemma-4 from using Intel's own
 attention kernel, and that is all it does. It doesn't change any file in the
 image, it doesn't install anything, and on its own it doesn't switch anything
-on. The two `.env` lines in
-[*Intel attention for gemma-4*](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4) do the
+on. The `.env` line in
+[*Intel attention for gemma-4*](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4) does the
 switching; the plugin is what makes that switch possible.
 
 ## The problem it solves
@@ -130,21 +130,21 @@ switched on fails at the head-size check.
 ## Turning it on and off
 
 The plugin is always loaded, and it's harmless when nothing asks for Flash
-Attention. With the default `.env`, gemma-4 still runs on Triton and image input
-works. gpt-oss isn't affected either way, because its head size is 64.
+Attention. With the compose defaults, gemma-4 still runs on Triton. gpt-oss
+isn't affected either way, because its head size is 64.
 
-These two `.env` lines turn Intel attention on:
+This `.env` line turns Intel attention on:
 
 ```dotenv
 VLLM_ATTN_BACKEND=FLASH_ATTN
-VLLM_TEXT_ONLY_FLAG=--language-model-only
 ```
 
-Then run `docker compose up -d`. To go back, comment both lines out and run it
-again.
+Then run `docker compose up -d`. To go back, set it to `auto` and run it again.
 
-The second line is the price: it turns image input off. The last section,
-[*The drawback: no image input*](#the-drawback-no-image-input), explains why.
+Image input keeps working, with one difference in how the image is read. The
+last section,
+[*Images and the left-to-right rule*](#images-and-the-left-to-right-rule),
+explains it.
 
 ## Why a plugin and not a patched file
 
@@ -214,6 +214,8 @@ In vLLM v0.31.0, the version this image is built from:
   [`supports_head_size()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/flash_attn.py#L420-L428)
 - The image-input check it leaves alone:
   [`supports_mm_prefix()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/flash_attn.py#L440-L442)
+- Where vLLM lets Flash Attention take images anyway when it's asked for by
+  name: [`get_attn_backend_cls()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/platforms/xpu.py#L184-L202)
 - Why FA4 always comes back "no" on Intel, the failed import:
   [`is_fa_version_supported()`](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/v1/attention/backends/fa_utils.py#L271-L279)
 - Why no setting can ask for another version, Intel is fixed at 2:
@@ -226,14 +228,9 @@ In vLLM v0.31.0, the version this image is built from:
 The head-512 kernels themselves aren't on GitHub in readable form here; they
 are compiled into `libattn_kernels_xe_2.so` inside the image.
 
-## The drawback: no image input
+## Images and the left-to-right rule
 
-With Intel attention on, gemma-4 can't take images. A request with an image gets
-`400 At most 0 image(s) may be provided in one prompt`. To use images you have
-to switch back to Triton, and long prompts get slow again. This setup runs one
-engine at a time, so it's one or the other.
-
-The reason is in how gemma-4 reads a picture. An image arrives as a block of
+gemma-4 reads a picture differently from text. An image arrives as a block of
 tokens in the prompt, 258 of them in this setup whatever the image size. Text is
 read strictly left to right: each token can only look at the tokens before it,
 never ahead, because when the model writes it can't see words it hasn't written
@@ -255,28 +252,37 @@ That mix needs a kernel that can be told where each image starts and ends, and
 that drops the left-to-right rule inside it. vLLM calls this "mm_prefix" and asks
 each backend whether it can do it, through `supports_mm_prefix()`. Triton can.
 Flash Attention says yes only with FA4, the same NVIDIA-only question as the
-head-size check, so on an Intel GPU the answer is no.
+head-size check, so on an Intel GPU the answer is no. The plugin leaves this
+check alone on purpose: nobody has found a way to make Intel's kernel apply the
+image rule.
 
-The plugin leaves this check alone on purpose. Nobody has found or tested a way
-to make Intel's kernel apply the image rule. Forcing the answer to yes might make
-the engine fail, or it might quietly read every image with the plain
-left-to-right rule and give wrong answers with no error at all. Neither has been
-tried, and the second would be the worse outcome.
+**On vLLM 0.30.0** that meant a choice. Asking for Flash Attention with images
+on stopped the boot with *"mm_prefix (PrefixLM bidirectional attention)
+requires FlashAttention v4"*. `--language-model-only` was the way out: it tells
+vLLM to treat gemma-4 as a text model, so the image rule is never needed, and
+images get `400 At most 0 image(s) may be provided in one prompt`.
 
-`--language-model-only` is the way out. It tells vLLM to treat gemma-4 as a text
-model with no image input, so the image rule is never needed. The boot log says
-exactly that:
+**From vLLM 0.31.0** the choice is gone. When Flash Attention is asked for by
+name, vLLM uses it for gemma-4 with images on, reads the image tokens left to
+right like text, and warns in the log:
 
 ```
-Disabled mm_prefix attention mode because multimodal inputs are
-configuration-disabled. Attention backends without mm_prefix support may now be
-selected.
+Using Flash Attention on XPU for a multimodal prefix-LM model because it was
+explicitly requested. The prefix-LM bidirectional mask cannot be applied, so
+image/video inputs will produce incorrect results
 ```
 
-Leave the flag out and ask for Flash Attention anyway, and the boot fails with
-*"mm_prefix (PrefixLM bidirectional attention) requires FlashAttention v4"*.
-(That message is read from the source; that exact boot hasn't been tried.)
+The warning sounds worse than what was measured. Nine test images gave the same
+answers on Intel attention as on Triton, which applies the rule correctly; the
+numbers are in
+[*Images with Intel attention*](GEMMA_4_26B_A4B.md#images-with-intel-attention).
+A likely reason, not proven: the image encoder already lets the parts of a
+picture see each other before the tokens reach the language model.
 
-This only goes away if Intel's kernels learn the image rule and vLLM asks them
-about it instead of asking about FA4. Until then it's a choice between fast long
-prompts with text only, and images with slow long prompts.
+The proper fix exists in 0.31.0 but only for NVIDIA. A backend called
+`TRITON_FLASH_ATTN` sends every batch that holds image tokens to Triton and the
+rest to Flash Attention, so images get the rule and text keeps the fast
+kernel. It asks for FlashAttention 3 or 4 and an NVIDIA Hopper GPU, and the
+Intel backend list never offers it. Making it work here would take a second
+plugin, and a check that both backends can share one KV cache layout on XPU.
+That hasn't been tried.

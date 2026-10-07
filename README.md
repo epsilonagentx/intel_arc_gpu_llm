@@ -114,7 +114,7 @@ several vLLM minors newer than the others and the only engine here whose kernels
 load gemma-4. Its guide covers the three models it's validated for (gemma-4,
 Qwen3.8-27B and gpt-oss-20b), and gemma-4's prefill trade-off: quadratic on the
 default Triton backend, and 16–28× faster with the Intel-attention switch, which
-costs image input. Speculative decoding speeds up decode on top of that: about
+keeps image input from vLLM 0.31.0 on. Speculative decoding speeds up decode on top of that: about
 1.7× for gemma-4 with Google's small draft model, and 2× for Qwen3.8 with its
 own MTP head and an FP8 output layer —
 [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md), with a page per model:

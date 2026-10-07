@@ -40,7 +40,7 @@ engine templates is the same on both cards.
 
 | Engine | Model | Context | KV memory | Mode |
 |---|---|---|---|---|
-| `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM`, with the draft model | 131,072 | `VLLM_KV_CACHE_MEMORY=10200547328` (9.5 GiB); 10.5 GiB without the draft | compiled |
+| `vllm_openai_xpu/` | gemma-4-26B-A4B-it, `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM`, with the draft model | 131,072 | `VLLM_KV_CACHE_MEMORY=11811160064` (11.0 GiB), images on; 10.5 GiB without the draft, text-only | compiled |
 | `vllm_openai_xpu/` | Qwen3.8-27B, `RedHatAI/Qwen3.8-27B-INT4` | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `vllm_openai_xpu/` | Qwen3.8-27B with MTP and an FP8 output layer | 131,072 | `VLLM_KV_CACHE_MEMORY=8603448832` (8.0 GiB) | compiled |
 | `scaler/` | Qwen3.8-27B, int4 at load | 98,304 | `--gpu-memory-utilization 0.90`, no byte value | eager |
@@ -54,8 +54,18 @@ that would use all of it, here `--kv-cache-memory=11916317184` (11.1 GiB). That
 leaves only about 0.5 GiB spare, so the setting is 10.5 GiB, which keeps about
 1.1 GiB free for the compile buffers. Taking the line out of `.env` isn't
 enough for this: Compose then falls back to gpt-oss's B60 value. The draft
-model adds 0.78 GiB of weights, so with it the setting drops by 1 GiB to
-9.5 GiB.
+model adds 0.78 GiB of weights, so with it the setting first dropped by 1 GiB
+to 9.5 GiB.
+
+**The 11.0 GiB value came from a load test instead** (2026-10-06, vLLM 0.31.0,
+images on, draft model). At 9.5 GiB nvtop still showed 1.92 GiB free after
+heavy image load, so the setting went up by 1.5 GiB. That gives 393,915 tokens
+(3.01×). The engine claims the rest of its working memory only under load:
+480 images in one request and 64 requests at once both still leave free
+memory, but 256 requests at once, the most the engine accepts, left only
+0.24 GiB of the card free. Every request succeeded; the margin is thin. The
+numbers are in
+[*Images with Intel attention*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#images-with-intel-attention).
 
 **gpt-oss has no B70 value yet.** The B60 values should boot here, because they
 are smaller than the room this card has, but they would leave memory unused.
@@ -90,7 +100,7 @@ a larger value would probably fit (inferred, not tried).
 | longest prompt run | 60,924 tokens in about 13 min ¹ | 129,331 tokens in 51.7 s |
 | KV pool | 376,999 tokens (2.88×) | 394,408 tokens (3.01×) |
 | weights on the card | 15.76 GiB | 14.69 GiB ² |
-| image input | works | off |
+| image input | works | off (on 0.30.0) |
 | `smoke.sh` | ALL PASS | ALL PASS, reasoning on and off |
 
 ¹ One run, with a second request overlapping it.
@@ -98,15 +108,21 @@ a larger value would probably fit (inferred, not tried).
 skipped (inferred).
 
 Intel attention is the plugin explained in
-[vllm_openai_xpu/PLUGIN.md](vllm_openai_xpu/PLUGIN.md), and image input is what
-it costs.
+[vllm_openai_xpu/PLUGIN.md](vllm_openai_xpu/PLUGIN.md). On 0.30.0 it cost image
+input. From 0.31.0 images work with it too (2026-10-06): nine test images gave
+the same answers as on Triton, decode speed didn't change, and at the same
+9.5 GiB setting the KV pool with the draft model below is 340,227 tokens
+(2.60×) instead of 356,893. The image encoder's ~1 GiB comes out of the free
+memory, not the KV setting. See
+[*Images with Intel attention*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#images-with-intel-attention).
 
 **With the draft model on top** (2026-10-03, Intel attention, 3 draft tokens,
 9.5 GiB setting), decode went from 82.1 to 137–146 tok/s with default sampling
 and from 86.6 to 156 at temperature 0. 6 requests at a time went from 323 to
 386 tok/s in total. After a 16,853-token prompt, decode went from 75.0 to
-109.5 tok/s, with the first token 0.4 s later. The KV pool is 356,893 tokens
-(2.72×). How it works, and the 4- and 5-token runs, are in
+109.5 tok/s, with the first token 0.4 s later. The KV pool was 356,893 tokens
+(2.72×) text-only; with image input it's 340,227 (2.60×) at 9.5 GiB and
+393,915 (3.01×) at the 11.0 GiB default. How it works, and the 4- and 5-token runs, are in
 [*Faster decode with a draft model*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#faster-decode-with-a-draft-model).
 
 **Against the B60, on the same Triton settings:** decode is about 1.30× faster

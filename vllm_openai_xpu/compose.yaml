@@ -71,7 +71,8 @@ services:
     # they starved the KV pool to 2.89 GiB and boot died needing 3.1 GiB.
     # gemma-4's smaller 4.25 GiB pin leaves headroom, so compiled mode boots
     # with the pool intact -- MEASURED at 32k, 64k AND 131,072 (2026-09-17).
-    # The buffers scale with max-num-batched-tokens (2496), NOT with context.
+    # The buffers scale with max-num-batched-tokens (2048; 2496 for gemma-4
+    # with images on), NOT with context.
     # Set VLLM_EAGER_FLAG=--no-enforce-eager to take it; the flag is passed
     # whole because argparse builds this as a BooleanOptionalAction, so
     # `--enforce-eager=False` does NOT parse.
@@ -126,9 +127,9 @@ services:
       # ./README.md "Per-request stats"
       - "--enable-per-request-metrics"
       # Attention backend. `auto` lets vLLM choose (TRITON_ATTN for gemma-4,
-      # FLASH_ATTN for gpt-oss and Qwen3.8). FLASH_ATTN plus --language-model-only
-      # runs gemma-4 on Intel's own kernel: much faster prefill, but no image
-      # input. Qwen3.8 keeps images on FLASH_ATTN.
+      # FLASH_ATTN for gpt-oss and Qwen3.8). FLASH_ATTN runs gemma-4 on Intel's
+      # own kernel: much faster prefill, and from 0.31.0 images still work.
+      # --language-model-only turns image input off for ~5% more KV pool.
       # The text-only flag is passed whole, like VLLM_EAGER_FLAG.
       # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"
       - "--attention-backend=${VLLM_ATTN_BACKEND:-auto}"
