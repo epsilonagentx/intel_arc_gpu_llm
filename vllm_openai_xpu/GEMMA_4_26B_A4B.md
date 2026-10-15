@@ -3,7 +3,7 @@
 How gemma-4-26B-A4B-it runs on this engine, and why it's set up the way it is.
 It's Block B in `.env.example` and the model this engine currently serves.
 Starting, switching models and the settings every model shares are in
-[README.md](README.md).
+[VLLM_OPENAI_XPU.md](VLLM_OPENAI_XPU.md).
 
 | | |
 |---|---|
@@ -386,7 +386,7 @@ attention, with and without the draft model.
 
 **Capping the thinking isn't enough on its own.** A temporary plugin gave every
 request a default `thinking_token_budget` of 4,096 (see
-[*What reasoning actually costs*](README.md#what-reasoning-actually-costs)). It
+[*What reasoning actually costs*](VLLM_OPENAI_XPU.md#what-reasoning-actually-costs)). It
 did cut the loop, and the model then made a valid tool call.
 But the agent sends the model's reasoning back with each tool step, the chat
 template puts it into the next prompt, and the next step looped again within

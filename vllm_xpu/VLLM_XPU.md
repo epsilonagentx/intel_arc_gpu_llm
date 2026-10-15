@@ -101,11 +101,11 @@ instead of dumping the model's scratch work into the reply.
 It won't load gemma-4. That's an engine-version limit, not a memory or
 quantization problem — this image is built on a vLLM old enough that the
 architecture isn't registered in it. If you want gemma-4, use
-[`vllm_openai_xpu/`](../vllm_openai_xpu/README.md), which runs a much newer
+[`vllm_openai_xpu/`](../vllm_openai_xpu/VLLM_OPENAI_XPU.md), which runs a much newer
 upstream vLLM.
 
 It's also not the fastest way to serve `gpt-oss-20b`. Intel's `llm-scaler` fork
-in [`scaler/`](../scaler/README.md) is tuned for Arc B-series and measurably beats
+in [`scaler/`](../scaler/SCALER.md) is tuned for Arc B-series and measurably beats
 it on the same model and the same card. The two are drop-in replacements for each
 other — identical model name, identical port — so swapping between them needs no
 change downstream.

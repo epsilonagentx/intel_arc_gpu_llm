@@ -5,9 +5,9 @@ Rationale, measurements, and **tested-then-rejected** configurations for the
 as ~270 lines of comments inside that file, which made the actual configuration
 hard to read.
 
-The other two engines have their own READMEs in their own folders —
-[`vllm_xpu/`](../vllm_xpu/README.md) for the stock Intel image and
-[`vllm_openai_xpu/`](../vllm_openai_xpu/README.md) for upstream's. They come up
+The other two engines have their own docs in their own folders —
+[`vllm_xpu/`](../vllm_xpu/VLLM_XPU.md) for the stock Intel image and
+[`vllm_openai_xpu/`](../vllm_openai_xpu/VLLM_OPENAI_XPU.md) for upstream's. They come up
 here only for comparison.
 
 How this file differs from the other docs:
@@ -17,7 +17,7 @@ How this file differs from the other docs:
 | [README.md](../README.md) | How do I run, swap, and verify the stack? |
 | [DEVELOPER.md](../DEVELOPER.md) | How is it put together, and why these values? |
 | [INTEL_ARC_B60.md](../INTEL_ARC_B60.md), [INTEL_ARC_B70.md](../INTEL_ARC_B70.md) | What differs between the two cards |
-| **scaler/README.md** (this file) | What has already been tried, measured, and ruled out on this engine? |
+| **scaler/SCALER.md** (this file) | What has already been tried, measured, and ruled out on this engine? |
 
 Read this before "improving" a flag — most of the obvious ideas have been tested
 on real hardware and rejected for recorded reasons. All measurements are on a
@@ -175,7 +175,7 @@ before believing a model "fits".
 `gemma-4-26B-A4B-it` does **not** work on this engine on a single B60. Two
 separate walls, both recorded with their exact errors in §8.1 — don't spend the
 afternoon rediscovering them. It runs on
-[`vllm_openai_xpu/`](../vllm_openai_xpu/README.md), which is the reason that
+[`vllm_openai_xpu/`](../vllm_openai_xpu/VLLM_OPENAI_XPU.md), which is the reason that
 folder exists.
 
 ---
@@ -352,7 +352,7 @@ and the 0.00 GiB row above is the proof (§4).
 **Capacity is free; speed is unaffected.** Decode is VRAM-*bandwidth*-bound, not
 capacity-bound, so a 1.86× pool buys concurrent long requests and nothing else.
 The same lever behaved identically on the upstream engine — 1.29× → 2.59× for
-82.4 → 82.3 tok/s ([`vllm_openai_xpu/README.md`](../vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*).
+82.4 → 82.3 tok/s ([`vllm_openai_xpu/VLLM_OPENAI_XPU.md`](../vllm_openai_xpu/VLLM_OPENAI_XPU.md), *--kv-cache-memory-bytes*).
 Note what it does *not* buy: 131,072 is already gpt-oss-20b's full window, so
 there is no context to gain, only parallelism.
 
@@ -784,7 +784,7 @@ and llm-scaler [§3.5](https://github.com/intel/llm-scaler/blob/vllm-0.26.0-b2/v
   measured throughput: `bench.sh` is single-stream, so what has been proven is
   that the pool allocates and single-stream stays correct — not that two
   concurrent 128k requests actually run. Same caveat the upstream engine carries
-  ([`vllm_openai_xpu/README.md`](../vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*).
+  ([`vllm_openai_xpu/VLLM_OPENAI_XPU.md`](../vllm_openai_xpu/VLLM_OPENAI_XPU.md), *--kv-cache-memory-bytes*).
 - `healthcheck.start_period` is still `7200s`, which was raised for the gemma-4
   experiment's ~52 GB download-and-quantize first boot. gpt-oss-20b only needs
   the ~1800s that covered its silent XPU cold start.

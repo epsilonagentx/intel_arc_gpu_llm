@@ -15,7 +15,7 @@ is the **how-to** for running the stack. The *why* behind the
 config (VRAM sizing, the util decision, quantization choices) is in
 [DEVELOPER.md](DEVELOPER.md); measurements and the record of what has already
 been tried and rejected on the scaler engine are in
-[scaler/README.md](scaler/README.md).
+[scaler/SCALER.md](scaler/SCALER.md).
 
 The stack runs **one** vLLM engine at a time on port 8000 (LAN-exposed), chosen
 from **three** interchangeable images — stock `intel/vllm`, Intel's `llm-scaler`
@@ -34,15 +34,15 @@ silently changing the model behind a fixed label.
 ## Choosing and running an engine
 
 Three interchangeable vLLM engines, each in its own folder, all publishing
-`:8000`. **Each folder has its own README, and that is where the detail for
+`:8000`. **Each folder has its own doc, and that is where the detail for
 that engine lives** — how to run it, upgrade it, swap its model, and what
 bites. Pick one and start there:
 
 | folder | image | serves | pick it for |
 |---|---|---|---|
-| [`vllm_xpu/`](vllm_xpu/README.md) | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
-| [`scaler/`](scaler/README.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s on the B60) |
-| [`vllm_openai_xpu/`](vllm_openai_xpu/README.md) | `vllm/vllm-openai-xpu` v0.31.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
+| [`vllm_xpu/`](vllm_xpu/VLLM_XPU.md) | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
+| [`scaler/`](scaler/SCALER.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s on the B60) |
+| [`vllm_openai_xpu/`](vllm_openai_xpu/VLLM_OPENAI_XPU.md) | `vllm/vllm-openai-xpu` v0.31.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
 
 **One GPU → exactly one engine at a time.** Each needs 13–16 GiB of weights plus
 its KV pool; together they OOM. Every command targets a folder, so you can't
@@ -82,7 +82,7 @@ docker compose -f <wanted>/compose.yaml up -d     # any of the three folders abo
 ```
 
 **Which models an engine can serve, and how to point it at a different one, is
-documented in that engine's own README** — and the three do not work the same
+documented in that engine's own doc** — and the three do not work the same
 way: `vllm_xpu/` and `vllm_openai_xpu/` read their model from a `.env` file,
 while `scaler/` has its model written into the `command:` block of its compose
 file. Go to the folder before changing a model.
@@ -107,7 +107,7 @@ and its image unlocks quantized-MoE paths the stock one lacks. It has
 engine-specific rules that matter before you run it in anger (**do not use
 `:latest`**, why it must stay `--enforce-eager`, and how to re-derive its KV-pool
 byte value); all of them, with the measurement log, are in
-[scaler/README.md](scaler/README.md).
+[scaler/SCALER.md](scaler/SCALER.md).
 
 `vllm_openai_xpu/` runs upstream's own image and is what's live today. It is
 several vLLM minors newer than the others and the only engine here whose kernels
@@ -117,7 +117,7 @@ default Triton backend, and 16–28× faster with the Intel-attention switch, wh
 keeps image input from vLLM 0.31.0 on. Speculative decoding speeds up decode on top of that: about
 1.7× for gemma-4 with Google's small draft model, and 2× for Qwen3.8 with its
 own MTP head and an FP8 output layer —
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md), with a page per model:
+[vllm_openai_xpu/VLLM_OPENAI_XPU.md](vllm_openai_xpu/VLLM_OPENAI_XPU.md), with a page per model:
 [gemma-4](vllm_openai_xpu/GEMMA_4_26B_A4B.md) and
 [Qwen3.8](vllm_openai_xpu/QWEN3_8_27B.md).
 
@@ -126,7 +126,7 @@ box, and the three sit on **different vLLM bases** (scaler → 0.26.0, stock →
 0.21.0, upstream → 0.31.0), so any difference mixes a fork's optimisations with an
 engine-version gap. Compare at equal `max_tokens`, and discard the first run after
 a cold start or a long idle — otherwise the numbers lie. The hygiene rules are in
-[scaler/README.md](scaler/README.md).
+[scaler/SCALER.md](scaler/SCALER.md).
 
 ---
 
@@ -232,7 +232,7 @@ Per-family behavior:
   and a request can still override it either way. Reasoning does not cost decode
   speed here, but it consumes `max_tokens` first — allow 1500+ or you get a trace
   and no answer. See
-  [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md).
+  [vllm_openai_xpu/VLLM_OPENAI_XPU.md](vllm_openai_xpu/VLLM_OPENAI_XPU.md).
 
 ---
 
@@ -281,7 +281,7 @@ firewall (firewalld, nftables, iptables) does the same job:
 | `hf-cache` | HF model weights | Survives compose changes; **shared by all three engines** (no re-download when you swap). Can be a host folder instead, see below |
 | `vllm-cache` | torch.compile + AOT artifacts (`vllm_xpu/`, the stock engine) | Critical — without it the first-request torch.compile (~30–60 s) re-runs cold on every restart |
 | `vllm-scaler-cache` | llm-scaler engine compile cache | Separate from `vllm-cache` (kernels are image-specific); only created when the scaler engine (`scaler/compose.yaml`) first boots. Stays near-empty — that engine runs `--enforce-eager`, so nothing is compiled, and it needs no clearing on an image bump |
-| `vllm-openai-cache` | upstream engine compile cache | Own volume again (kernels are image-specific). This engine runs **compiled**, so unlike the scaler's it does fill — clear it once after an image bump, per [vllm_openai_xpu/README.md](vllm_openai_xpu/README.md) |
+| `vllm-openai-cache` | upstream engine compile cache | Own volume again (kernels are image-specific). This engine runs **compiled**, so unlike the scaler's it does fill — clear it once after an image bump, per [vllm_openai_xpu/VLLM_OPENAI_XPU.md](vllm_openai_xpu/VLLM_OPENAI_XPU.md) |
 
 **The models can live in any host folder**, e.g. `~/models/hf`. Set `HF_CACHE`
 to its absolute path in each engine's `.env`; the same value everywhere keeps

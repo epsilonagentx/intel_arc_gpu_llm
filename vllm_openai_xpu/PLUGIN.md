@@ -148,7 +148,7 @@ explains it.
 
 ## Why a plugin and not a patched file
 
-The first test, the A/B comparison in the README, mounted a patched copy of the
+The first test, the A/B comparison in the engine doc, mounted a patched copy of the
 whole `flash_attn.py` over the original. That works, but it freezes 2,056 lines
 of vLLM at one version. After the next image upgrade the old copy would quietly
 replace the new file, and whatever upstream changed in it would be lost without
@@ -206,7 +206,7 @@ In this repo:
 - [`head512_plugin/vllm_xpu_head512-1.0.dist-info/entry_points.txt`](head512_plugin/vllm_xpu_head512-1.0.dist-info/entry_points.txt)
 - [`compose.yaml`](compose.yaml), the plugin mount and `PYTHONPATH`
 - [*Why the slow kernel gets chosen*](GEMMA_4_26B_A4B.md#why-the-slow-kernel-gets-chosen)
-  in the README, the full chain of checks
+  in the engine doc, the full chain of checks
 
 In vLLM v0.31.0, the version this image is built from:
 

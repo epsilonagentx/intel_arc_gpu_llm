@@ -2,7 +2,7 @@
 
 How Qwen3.8-27B runs on this engine, and how MTP and an FP8 output layer double
 its decode. Starting, switching models and the settings every model shares are
-in [README.md](README.md).
+in [VLLM_OPENAI_XPU.md](VLLM_OPENAI_XPU.md).
 
 | | |
 |---|---|
@@ -114,7 +114,7 @@ native FP8 W8A16 kernel. [`tools/quantize_heads.py`](tools/quantize_heads.py)
 makes such a copy next to the original, which stays untouched. How to run it,
 what it changes in the Red Hat checkpoint, and its two faster variants (an
 int4 draft head, and an int4 output layer) are in
-[tools/README.md](tools/README.md). Then point the engine at the copy:
+[tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md). Then point the engine at the copy:
 
 ```dotenv
 VLLM_MODEL=/cache/huggingface/local/Qwen3.8-27B-INT4-fp8head
@@ -158,6 +158,6 @@ measured 62.1 and 64.9 tok/s, the same within noise:
   scored 96. Ranked by next token, FP8 stays close to two identical runs of
   the same setup; int4 changes the top token at about 3% more positions, so
   it's the fastest choice but not a free one. Details in
-  [tools/README.md](tools/README.md#measured).
+  [tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md#measured).
 - `smoke.sh` passes, image input still works, and the prefix cache still hits
   on follow-up turns.

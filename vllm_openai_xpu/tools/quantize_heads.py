@@ -4,7 +4,7 @@ Makes a local copy of a compressed-tensors checkpoint whose 16-bit `lm_head`
 is stored as FP8 (default) or int4, and with --mtp-int4 whose MTP draft head
 is int4 too. vLLM can't quantize these layers as it loads, but it loads a
 checkpoint that declares them quantized. How to run it, what it changes and
-what it measured: ./README.md.
+what it measured: ./VLLM_OPENAI_XPU_TOOLS.md.
 """
 import argparse
 import glob
