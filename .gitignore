@@ -21,3 +21,6 @@ Thumbs.db
 .idea/
 *.swp
 *~
+
+# Obsidian vault settings
+.obsidian/

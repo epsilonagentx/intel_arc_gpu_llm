@@ -9,7 +9,7 @@ the [README](README.md).
 > The B60 was replaced by a B70 on 2026-09-26 in the machine these numbers come
 > from, so none of them can be re-measured there. They stay as a record, and they
 > still hold for anyone running a B60. Most measurements quoted in the engine
-> READMEs were taken on this card as well.
+> engine docs were taken on this card as well.
 
 A row marked "spec" comes from Intel's published specification; everything else
 was measured.
@@ -112,7 +112,7 @@ usage chunk.
 ## What doesn't fit
 
 - **gemma-4-26B-A4B on the scaler engine.** Two separate walls, both recorded
-  with their exact errors in [scaler/README.md](scaler/README.md) §8.1. It runs
+  with their exact errors in [scaler/SCALER.md](scaler/SCALER.md) §8.1. It runs
   on the upstream engine instead.
 - **Qwen3.5/3.6-35B-A3B in AWQ**, about 24 GB of weights against ~22.7 GiB
   usable.

@@ -2,8 +2,8 @@
 
 Why the config in the engine compose files is the way it is. This file covers
 the two **gpt-oss-20b** engines, `vllm_xpu/compose.yaml` and
-`scaler/compose.yaml`; the third engine keeps its rationale in its own README,
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md). For how to *operate* the stack
+`scaler/compose.yaml`; the third engine keeps its rationale in its own doc,
+[vllm_openai_xpu/VLLM_OPENAI_XPU.md](vllm_openai_xpu/VLLM_OPENAI_XPU.md). For how to *operate* the stack
 see [README.md](README.md); for what differs between the two cards see
 [INTEL_ARC_B60.md](INTEL_ARC_B60.md) and [INTEL_ARC_B70.md](INTEL_ARC_B70.md).
 
@@ -37,8 +37,8 @@ VRAM — **never** just bump util, or you'll OOM on the edge again.
 **`scaler/` and `vllm_openai_xpu/` size the KV pool explicitly** with
 `--kv-cache-memory-bytes` instead of letting util decide it. That value is
 absolute and **OOMs rather than shrinking**, so it is model- and runner-specific;
-see [scaler/README.md](scaler/README.md) and
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md), *--kv-cache-memory-bytes*.
+see [scaler/SCALER.md](scaler/SCALER.md) and
+[vllm_openai_xpu/VLLM_OPENAI_XPU.md](vllm_openai_xpu/VLLM_OPENAI_XPU.md), *--kv-cache-memory-bytes*.
 
 ## Why 128k context fits
 
@@ -92,7 +92,7 @@ Effort is a top-level request field, `reasoning_effort: low|medium|high`
 - **Device passthrough differs from `0.17.0-xpu`:** 0.21.0 requires the whole
   `/dev/dri` **plus** a `/dev/dri/by-path:ro` mount (oneCCL enumerates via
   `by-path` on warm-up) or it won't boot. Details in `vllm_xpu/compose.yaml` and the
-  [vllm_xpu/README.md](vllm_xpu/README.md)'s *Upgrading the image*.
+  [vllm_xpu/VLLM_XPU.md](vllm_xpu/VLLM_XPU.md)'s *Upgrading the image*.
 - **Gemma 4 arches are now registered** (`gemma4` / `gemma4_mm`) — unlike
   `0.17.0-xpu`, which topped out at Gemma3n. That clears the *architecture* gate.
   The `qwen3` and `openai_gptoss` reasoning parsers are present as before.
@@ -139,7 +139,7 @@ behind it:
   default you can simply flip.
 
 Image pins, the image-by-image throughput table, release notes and the
-env-var re-checks are all in [scaler/README.md](scaler/README.md).
+env-var re-checks are all in [scaler/SCALER.md](scaler/SCALER.md).
 
 ---
 

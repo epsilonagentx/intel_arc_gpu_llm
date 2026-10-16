@@ -69,7 +69,7 @@ Other pages in this folder:
   an FP8 output layer
 - [PLUGIN.md](PLUGIN.md): the plugin that lets gemma-4 use Intel's attention
   kernel, and how images are read with it
-- [tools/README.md](tools/README.md): the output-layer converter for Qwen3.8
+- [tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md): the output-layer converter for Qwen3.8
 
 ---
 
@@ -651,6 +651,6 @@ gemma-4's own are in [GEMMA_4_26B_A4B.md](GEMMA_4_26B_A4B.md#open-questions).
 ---
 
 See also: the [top-level README](../README.md) for the stack overview, firewall
-and volumes; [`scaler/README.md`](../scaler/README.md) for the alternative engine
-and its measurement log; [`vllm_xpu/README.md`](../vllm_xpu/README.md) for the
+and volumes; [`scaler/SCALER.md`](../scaler/SCALER.md) for the alternative engine
+and its measurement log; [`vllm_xpu/VLLM_XPU.md`](../vllm_xpu/VLLM_XPU.md) for the
 stock Intel baseline.

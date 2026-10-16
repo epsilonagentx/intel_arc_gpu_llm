@@ -40,7 +40,7 @@
   - Each doc has one job — put content where it belongs:
     `README.md` (how to run the stack), `DEVELOPER.md` (the *why*),
     `INTEL_ARC_B60.md` and `INTEL_ARC_B70.md` (what differs per card), and
-    each engine folder's `README.md` (that engine).
+    each engine folder's own doc (`SCALER.md`, `VLLM_XPU.md`, `VLLM_OPENAI_XPU.md`, that engine).
   - Shell scripts: keep them dependency-light.
 
   ## Before opening a PR
