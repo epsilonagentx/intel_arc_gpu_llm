@@ -70,6 +70,8 @@ Other pages in this folder:
 - [PLUGIN.md](PLUGIN.md): the plugin that lets gemma-4 use Intel's attention
   kernel, and how images are read with it
 - [tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md): the output-layer converter for Qwen3.8
+- [chat_templates/CHAT_TEMPLATES.md](chat_templates/CHAT_TEMPLATES.md): edited chat templates, such as
+  Qwen3.8's that accepts several system messages
 
 ---
 
@@ -121,6 +123,7 @@ the three whose wrong value breaks the boot or quietly makes things worse.
 | `VLLM_KV_CACHE_MEMORY` **!** | KV pool in **absolute bytes**; overrides util, skips profiling, and OOMs rather than shrinking |
 | `VLLM_EAGER_FLAG` **!** | `--enforce-eager` (required by gpt-oss's 8.0 GiB B60 pin) or `--no-enforce-eager` (gemma-4 and Qwen3.8, measured fine at 131,072). Passed whole — `--enforce-eager=False` does not parse |
 | `VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS` | Server-side chat-template defaults. The gemma-4 block sets `{"enable_thinking":true}`, which turns reasoning on for every request; `null` leaves it to each request. Qwen3.8 thinks by default without it |
+| `VLLM_CHAT_TEMPLATE` | A chat template to use instead of the model's own, as a path inside the container. Empty (default) keeps the model's. Qwen3.8's block can point it at an edited copy in `chat_templates/` that merges several system messages into one ([CHAT_TEMPLATES.md](chat_templates/CHAT_TEMPLATES.md)) |
 | `VLLM_ATTN_BACKEND` | `auto` (default) lets vLLM choose; `FLASH_ATTN` asks for Intel's kernel, which gemma-4 can use only through `head512_plugin/` — see [*Intel attention for gemma-4*](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4) |
 | `VLLM_TEXT_ONLY_FLAG` | `--no-language-model-only` (default) or `--language-model-only`, which turns image input off and gives gemma-4 about 5% more KV pool. Passed whole, like `VLLM_EAGER_FLAG` |
 | `VLLM_SPECULATIVE_CONFIG` | Speculative decoding as JSON; `null` (default) is off. The gemma-4 block names Google's draft model with 3 draft tokens ([GEMMA_4_26B_A4B.md](GEMMA_4_26B_A4B.md#faster-decode-with-a-draft-model)). Qwen3.8's block uses the MTP head its checkpoint ships, `{"method":"mtp","num_speculative_tokens":3}` ([QWEN3_8_27B.md](QWEN3_8_27B.md#faster-decode-mtp-and-an-fp8-output-layer)). Each draft fits only its own model, so gpt-oss's block sets `null` |
@@ -207,6 +210,7 @@ VLLM_MAX_MODEL_LEN=131072 \
 VLLM_KV_CACHE_MEMORY=8603448832 \
 VLLM_EAGER_FLAG=--no-enforce-eager \
 VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS=null \
+VLLM_CHAT_TEMPLATE=/opt/chat-templates/qwen3_8_merge_system.jinja \
 VLLM_ATTN_BACKEND=FLASH_ATTN \
 VLLM_TEXT_ONLY_FLAG=--no-language-model-only \
 VLLM_SPECULATIVE_CONFIG='{"method":"mtp","num_speculative_tokens":3}' \

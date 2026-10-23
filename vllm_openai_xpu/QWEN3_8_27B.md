@@ -26,6 +26,7 @@ layer double it (see
 - [Measured against Triton](#measured-against-triton)
 - [Leave room for thinking](#leave-room-for-thinking)
 - [Faster decode: MTP and an FP8 output layer](#faster-decode-mtp-and-an-fp8-output-layer)
+- [Several system messages](#several-system-messages)
 
 ---
 
@@ -162,3 +163,12 @@ measured 62.1 and 64.9 tok/s, the same within noise:
   [tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md#measured).
 - `smoke.sh` passes, image input still works, and the prefix cache still hits
   on follow-up turns.
+
+## Several system messages
+
+Qwen3.8's chat template accepts one system message, and only as the first
+message. A second one, which some gateways add in front of the client's own,
+fails every request with `System message must be at the beginning.`
+[chat_templates/CHAT_TEMPLATES.md](chat_templates/CHAT_TEMPLATES.md#qwen38-several-system-messages)
+has an edited copy that merges them into one, and how to turn it on in
+Block C.
