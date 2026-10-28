@@ -14,7 +14,7 @@ services:
   vllm-openai-xpu:
     # Upstream's own XPU image, separate Docker Hub repo from the CUDA one.
     # Here `latest` DOES track newest stable (unlike the Intel images).
-    image: vllm/vllm-openai-xpu:v0.31.0
+    image: vllm/vllm-openai-xpu:v0.32.0
     container_name: vllm-openai-xpu
     restart: "no"            # evaluation engine — do not let it fight for the GPU
     # Whole /dev/dri + the by-path bind below are BOTH required, even at
@@ -44,6 +44,8 @@ services:
       # VLLM_ATTN_BACKEND=FLASH_ATTN.
       # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"
       - ./head512_plugin:/opt/vllm-plugins:ro
+      # Edited chat templates, picked by VLLM_CHAT_TEMPLATE below.
+      - ./chat_templates:/opt/chat-templates:ro
     environment:
       HF_HOME: /cache/huggingface
       VLLM_CACHE_ROOT: /cache/vllm
@@ -109,6 +111,12 @@ services:
       # `null` not `{}` because a brace in a ${VAR:-default} breaks Compose
       # interpolation. No-op for gpt-oss, which always reasons.
       - "--default-chat-template-kwargs=${VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS:-null}"
+      # Replaces the model's own chat template. Empty (default) keeps the
+      # model's. Qwen3.8's edited copy merges every system message into one,
+      # where the original rejects a second one:
+      # /opt/chat-templates/qwen3_8_merge_system.jinja
+      # ./chat_templates/CHAT_TEMPLATES.md
+      - "--chat-template=${VLLM_CHAT_TEMPLATE:-}"
       - "--reasoning-parser=${VLLM_REASONING_PARSER:-openai_gptoss}"
       - "--enable-auto-tool-choice"
       - "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-openai}"

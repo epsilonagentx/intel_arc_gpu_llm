@@ -451,9 +451,9 @@ the model away from copying code exactly, which a coding agent depends on.
 5. **Images on Intel attention, beyond nine test images.** The image tokens
    are read left to right, and nine synthetic images gave the same answers as
    Triton. Real photos, several images per request and video are untested.
-   vLLM 0.31.0 has a backend that sends image batches to Triton and the rest
-   to Flash Attention (`TRITON_FLASH_ATTN`), but only for NVIDIA. See
-   [PLUGIN.md](PLUGIN.md#images-and-the-left-to-right-rule).
+   Since 0.31.0 vLLM has a backend that sends image batches to Triton and
+   the rest to Flash Attention (`TRITON_FLASH_ATTN`), but only for NVIDIA.
+   See [PLUGIN.md](PLUGIN.md#images-and-the-left-to-right-rule).
 6. **gemma-4's thinking loops.** Does the template fix from Hugging Face
    discussion #48 stop them on this checkpoint, and what does it cost? Do the
    loops happen on Triton attention too? See *Known issue: thinking loops in
