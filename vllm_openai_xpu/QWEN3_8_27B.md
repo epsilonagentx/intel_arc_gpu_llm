@@ -2,7 +2,7 @@
 
 How Qwen3.8-27B runs on this engine, and how MTP and an FP8 output layer double
 its decode. Starting, switching models and the settings every model shares are
-in [README.md](README.md).
+in [VLLM_OPENAI_XPU.md](VLLM_OPENAI_XPU.md).
 
 | | |
 |---|---|
@@ -26,6 +26,7 @@ layer double it (see
 - [Measured against Triton](#measured-against-triton)
 - [Leave room for thinking](#leave-room-for-thinking)
 - [Faster decode: MTP and an FP8 output layer](#faster-decode-mtp-and-an-fp8-output-layer)
+- [Several system messages](#several-system-messages)
 
 ---
 
@@ -56,10 +57,11 @@ linear-attention state, and this is normal.
 
 The log also mentions Triton (`Warming up Qwen GDN Triton kernels`), and that
 doesn't mean attention fell back. On XPU the linear-attention layers run their
-XPU path, which calls Intel's own kernel (`torch.ops._xpu_C.gdn_attention`),
-and 0.31.0 says so with `GDN decode kernel: XPU` (0.30.0 printed "cuda" there
+XPU path, which calls Intel's own kernel (`torch.ops._xpu_C.gdn_attention`).
+With the draft model on, 0.32.0 says so with `GDN spec decode kernel: XPU`
+(0.31.0 printed `GDN decode kernel: XPU`, and 0.30.0 printed "cuda" there
 even on XPU). `Warmed M-RoPE Triton kernels` is the position encoding, a small
-step outside attention. This is read from the v0.31.0 source.
+step outside attention. This is read from the v0.32.0 source.
 
 ## Measured against Triton
 
@@ -114,7 +116,7 @@ native FP8 W8A16 kernel. [`tools/quantize_heads.py`](tools/quantize_heads.py)
 makes such a copy next to the original, which stays untouched. How to run it,
 what it changes in the Red Hat checkpoint, and its two faster variants (an
 int4 draft head, and an int4 output layer) are in
-[tools/README.md](tools/README.md). Then point the engine at the copy:
+[tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md). Then point the engine at the copy:
 
 ```dotenv
 VLLM_MODEL=/cache/huggingface/local/Qwen3.8-27B-INT4-fp8head
@@ -158,6 +160,15 @@ measured 62.1 and 64.9 tok/s, the same within noise:
   scored 96. Ranked by next token, FP8 stays close to two identical runs of
   the same setup; int4 changes the top token at about 3% more positions, so
   it's the fastest choice but not a free one. Details in
-  [tools/README.md](tools/README.md#measured).
+  [tools/VLLM_OPENAI_XPU_TOOLS.md](tools/VLLM_OPENAI_XPU_TOOLS.md#measured).
 - `smoke.sh` passes, image input still works, and the prefix cache still hits
   on follow-up turns.
+
+## Several system messages
+
+Qwen3.8's chat template accepts one system message, and only as the first
+message. A second one, which some gateways add in front of the client's own,
+fails every request with `System message must be at the beginning.`
+[chat_templates/CHAT_TEMPLATES.md](chat_templates/CHAT_TEMPLATES.md#qwen38-several-system-messages)
+has an edited copy that merges them into one, and how to turn it on in
+Block C.

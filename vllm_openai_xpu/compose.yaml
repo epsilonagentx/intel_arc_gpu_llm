@@ -7,14 +7,14 @@
 # !! MEASURED on the B60 2026-09-09: 0.29.0 + V2 runner + the pinned pool below
 # !! = 83.5 tok/s, 338,928-token KV pool (2.59x @128k), smoke ALL PASS.
 # !! `restart: "no"` on purpose.
-# Rationale, verified upstream facts, what to measure:  ./README.md
+# Rationale, verified upstream facts, what to measure:  ./VLLM_OPENAI_XPU.md
 name: llm   # SAME project as vllm_xpu/scaler ON PURPOSE — shares the hf-cache volume
 
 services:
   vllm-openai-xpu:
     # Upstream's own XPU image, separate Docker Hub repo from the CUDA one.
     # Here `latest` DOES track newest stable (unlike the Intel images).
-    image: vllm/vllm-openai-xpu:v0.31.0
+    image: vllm/vllm-openai-xpu:v0.32.0
     container_name: vllm-openai-xpu
     restart: "no"            # evaluation engine — do not let it fight for the GPU
     # Whole /dev/dri + the by-path bind below are BOTH required, even at
@@ -44,13 +44,15 @@ services:
       # VLLM_ATTN_BACKEND=FLASH_ATTN.
       # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"
       - ./head512_plugin:/opt/vllm-plugins:ro
+      # Edited chat templates, picked by VLLM_CHAT_TEMPLATE below.
+      - ./chat_templates:/opt/chat-templates:ro
     environment:
       HF_HOME: /cache/huggingface
       VLLM_CACHE_ROOT: /cache/vllm
       ZES_ENABLE_SYSMAN: "1"
       # MUST be 0 with the V2 runner below: 1 SEGFAULTS at boot inside the SYCL
       # persistent code-cache read. Costs a kernel rebuild each boot (~70 s
-      # total). ./README.md "SYCL_CACHE_PERSISTENT=0"
+      # total). ./VLLM_OPENAI_XPU.md "SYCL_CACHE_PERSISTENT=0"
       SYCL_CACHE_PERSISTENT: "${SYCL_CACHE_PERSISTENT:-0}"
       VLLM_WORKER_MULTIPROC_METHOD: "spawn"    # platform auto-sets this; explicit for parity
       no_proxy: "localhost,127.0.0.1"
@@ -79,7 +81,7 @@ services:
     # Prefill is UNCHANGED by it (on TRITON_ATTN still quadratic, exponent 2.048
     # measured -- that is the attention backend, not launch overhead).
     # From 0.31.0 compiled mode also captures XPU graphs; there is no longer
-    # an environment variable to turn them off. ./README.md "Performance"
+    # an environment variable to turn them off. ./VLLM_OPENAI_XPU.md "Performance"
     command:
       - "${VLLM_MODEL:-openai/gpt-oss-20b}"
       - "--host=0.0.0.0"
@@ -96,7 +98,7 @@ services:
       # different value (7117934592 -> 280,425 tok). To go back to util-based sizing,
       # comment this line OUT: a blank VLLM_KV_CACHE_MEMORY resolves to the default.
       # Canonical spelling: the log advises --kv-cache-memory, which parses only
-      # as an argparse prefix abbreviation. ./README.md "--kv-cache-memory-bytes"
+      # as an argparse prefix abbreviation. ./VLLM_OPENAI_XPU.md "--kv-cache-memory-bytes"
       - "--kv-cache-memory-bytes=${VLLM_KV_CACHE_MEMORY:-8603448832}"
       # Most requests at once. 256 is vLLM's own default. Qwen3.8 needs 128
       # with graphs: capture wants one linear-attention state block per
@@ -109,6 +111,12 @@ services:
       # `null` not `{}` because a brace in a ${VAR:-default} breaks Compose
       # interpolation. No-op for gpt-oss, which always reasons.
       - "--default-chat-template-kwargs=${VLLM_DEFAULT_CHAT_TEMPLATE_KWARGS:-null}"
+      # Replaces the model's own chat template. Empty (default) keeps the
+      # model's. Qwen3.8's edited copy merges every system message into one,
+      # where the original rejects a second one:
+      # /opt/chat-templates/qwen3_8_merge_system.jinja
+      # ./chat_templates/CHAT_TEMPLATES.md
+      - "--chat-template=${VLLM_CHAT_TEMPLATE:-}"
       - "--reasoning-parser=${VLLM_REASONING_PARSER:-openai_gptoss}"
       - "--enable-auto-tool-choice"
       - "--tool-call-parser=${VLLM_TOOL_CALL_PARSER:-openai}"
@@ -116,7 +124,7 @@ services:
       # swap is visible downstream rather than silently changing the model
       # behind a fixed label. A swap therefore requires updating the consumer's
       # model mapping; that is intentional, because the models differ in
-      # context limit and prefill cost (see ../README.md and ./README.md).
+      # context limit and prefill cost (see ../README.md and ./VLLM_OPENAI_XPU.md).
       # Serving a second id is possible (the arg is nargs="+") but needs another
       # literal entry here — Compose cannot word-split one variable, and vLLM
       # does NOT dedupe, so a repeated name gets listed twice.
@@ -124,7 +132,7 @@ services:
       # Adds a `metrics` object (TTFT, tok/s, queue time) to every chat and
       # completions response. A stream carries it only in the final usage
       # chunk, so the client must send stream_options.include_usage.
-      # ./README.md "Per-request stats"
+      # ./VLLM_OPENAI_XPU.md "Per-request stats"
       - "--enable-per-request-metrics"
       # Attention backend. `auto` lets vLLM choose (TRITON_ATTN for gemma-4,
       # FLASH_ATTN for gpt-oss and Qwen3.8). FLASH_ATTN runs gemma-4 on Intel's

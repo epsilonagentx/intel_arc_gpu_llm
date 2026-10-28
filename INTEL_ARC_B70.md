@@ -130,18 +130,19 @@ and from 86.6 to 156 at temperature 0. 6 requests at a time went from 323 to
 27.7 s, 23,307 in 107.2 s). That's in line with the memory-bandwidth ratio.
 Prefill on Triton is still quadratic here, just quicker.
 
-**The KV formula holds on this card too.** The formula in the engine README
+**The KV formula holds on this card too.** The formula in the engine doc
 predicts 2.877× concurrency at the 10.5 GiB setting and 131,072 context, and the
 log says 2.88×. See
 [*Context is nearly free*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#context-is-nearly-free--the-kv-formula).
 
-**XPU graphs are on from vLLM 0.31.0, and they fit.** Capture takes 0.74 GiB
+**XPU graphs are on from vLLM 0.31.0, and they fit.** Capture takes 0.31 GiB
 for gemma-4 and 0.96 GiB for Qwen3.8, next to the KV settings above, and
 makes gemma-4 decode about 8% faster after a long prompt. Qwen3.8 needs
 `VLLM_MAX_NUM_SEQS=128` for the capture. On 0.30.0, with graphs off, the GPU
 was already 99–100% busy during decode, which is why short prompts barely
-change. The 0.30.0 → 0.31.0 comparison is in
-[vllm_openai_xpu/README.md](vllm_openai_xpu/README.md#0300--0310).
+change. The version comparisons are in
+[*0.30.0 → 0.31.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0300--0310) and
+[*0.31.0 → 0.32.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0310--0320).
 
 ## Measured: Qwen3.8-27B on the upstream engine
 
@@ -187,7 +188,7 @@ Weights take 17.18 GiB. At the 8.0 GiB setting the KV pool is 208,093 tokens
 the 16-bit output layer, and `smoke.sh` passes. The int4 output layer is
 faster but shifts the next-token ranking measurably, with the same GSM8K
 score; the quality numbers are in
-[vllm_openai_xpu/tools/README.md](vllm_openai_xpu/tools/README.md#measured).
+[vllm_openai_xpu/tools/VLLM_OPENAI_XPU_TOOLS.md](vllm_openai_xpu/tools/VLLM_OPENAI_XPU_TOOLS.md#measured).
 How to set it up is in
 [vllm_openai_xpu/QWEN3_8_27B.md](vllm_openai_xpu/QWEN3_8_27B.md#faster-decode-mtp-and-an-fp8-output-layer).
 

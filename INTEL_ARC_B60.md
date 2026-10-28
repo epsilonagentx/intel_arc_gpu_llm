@@ -9,7 +9,7 @@ the [README](README.md).
 > The B60 was replaced by a B70 on 2026-09-26 in the machine these numbers come
 > from, so none of them can be re-measured there. They stay as a record, and they
 > still hold for anyone running a B60. Most measurements quoted in the engine
-> READMEs were taken on this card as well.
+> engine docs were taken on this card as well.
 
 A row marked "spec" comes from Intel's published specification; everything else
 was measured.
@@ -63,12 +63,12 @@ pinned, compiled mode's buffers starve the KV pool and the boot dies 0.21 GiB
 short of 131,072. On the scaler, eager is mandatory for a different reason:
 compiled mode boots and then returns empty answers.
 
-**vLLM 0.31.0 hasn't been booted on this card.** It captures XPU graphs in
-compiled mode and has no switch to turn them off apart from eager mode. On
-0.30.0, graphs took 1.54 GiB here and didn't fit next to gemma-4's 4.25 GiB
-KV setting at 131,072 context. If a 0.31.0 boot fails at graph capture, use
-`VLLM_EAGER_FLAG=--enforce-eager` (about 7% slower decode for gemma-4) or stay
-on the `v0.30.0` image.
+**vLLM 0.31.0 and newer haven't been booted on this card.** They capture XPU
+graphs in compiled mode and have no switch to turn them off apart from eager
+mode. On 0.30.0, graphs took 1.54 GiB here and didn't fit next to gemma-4's
+4.25 GiB KV setting at 131,072 context. If a newer boot fails at graph
+capture, use `VLLM_EAGER_FLAG=--enforce-eager` (about 7% slower decode for
+gemma-4) or stay on the `v0.30.0` image.
 
 ## Measured results
 
@@ -112,7 +112,7 @@ usage chunk.
 ## What doesn't fit
 
 - **gemma-4-26B-A4B on the scaler engine.** Two separate walls, both recorded
-  with their exact errors in [scaler/README.md](scaler/README.md) §8.1. It runs
+  with their exact errors in [scaler/SCALER.md](scaler/SCALER.md) §8.1. It runs
   on the upstream engine instead.
 - **Qwen3.5/3.6-35B-A3B in AWQ**, about 24 GB of weights against ~22.7 GiB
   usable.
