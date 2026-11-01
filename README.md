@@ -267,10 +267,10 @@ firewall (firewalld, nftables, iptables) does the same job:
 - **Port 8000 (vLLM):** allow only your LAN subnet — or bind it to localhost if
   you only consume it on the host. With UFW, for example:
   `sudo ufw allow from 192.168.x.0/24 to any port 8000 proto tcp`
-- **Port 3000 (Open WebUI), if you run it:** the mapping in
-  `open_web_ui/compose.yaml` is `3000:8080`, which binds **all** interfaces —
-  so either change it to `127.0.0.1:3000:8080` to keep the auth-disabled UI on
-  localhost, or firewall it to your LAN subnet the same way as port 8000.
+- **Port 3000 (Open WebUI), if you run it:** by default it binds **all**
+  interfaces. Set `OPEN_WEBUI_PORT=192.168.x.x:3000` (your host's LAN
+  address) in `open_web_ui/.env` so the auth-disabled UI listens on that
+  network only, and firewall it to your LAN subnet the same way as port 8000.
 
 ---
 
@@ -304,8 +304,10 @@ any UI you prefer.
 > off (`WEBUI_AUTH=false`), open CORS (Open WebUI defaults `CORS_ALLOW_ORIGIN` to
 > `*` and logs `WARNING: CORS_ALLOW_ORIGIN IS SET TO '*' - NOT RECOMMENDED FOR
 > PRODUCTION DEPLOYMENTS`), and binds `:3000` on all interfaces. Before any real or
-> shared use: set `WEBUI_AUTH=true`, pin `CORS_ALLOW_ORIGIN` to your actual origin,
-> and keep the port off untrusted networks (see *Firewall*).
+> shared use, set these in `open_web_ui/.env`: `OPEN_WEBUI_AUTH=true`,
+> `OPEN_WEBUI_CORS_ALLOW_ORIGIN` to your actual origin, and keep the port off
+> untrusted networks (see *Firewall*). `open_web_ui/.env.example` lists every
+> setting.
 
 ```bash
 docker compose -f open_web_ui/compose.yaml up -d      # start the UI
@@ -323,9 +325,11 @@ Open it at `http://localhost:3000` (auth disabled). It runs as its own Compose
 project (`open-webui`), so it sits on a separate Docker network and reaches vLLM
 through the **host's published port**, not by Docker service name:
 
-- **Same host (default):** `OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1`
-  — the file maps `host.docker.internal` to the host gateway (Linux).
-- **Different host:** set `OPENAI_API_BASE_URL=http://<vllm-host>:8000/v1`.
+- **Same host (default):** `http://host.docker.internal:8000/v1` — the file
+  maps `host.docker.internal` to the host gateway (Linux).
+- **Different host:** set `OPEN_WEBUI_API_BASE_URL=http://<vllm-host>:8000/v1`
+  in `open_web_ui/.env`. Open WebUI keeps the first URL it saw in its
+  database, so on an existing install change it in its Admin settings instead.
 - **Scaler engine:** no change needed — `scaler/compose.yaml` also serves
   on `:8000` (only one engine runs at a time on the single GPU).
 

@@ -6,11 +6,15 @@
 # the stack. Open WebUI is just ONE example of an OpenAI-compatible chat UI —
 # swap in any client you prefer.
 #
-# !! LOCAL TESTING ONLY — NOT production-hardened. Auth is off (WEBUI_AUTH=false),
-#    CORS is open (Open WebUI defaults CORS_ALLOW_ORIGIN to '*' and logs a warning
-#    about it), and :3000 binds all interfaces. Before any real/shared use: set
-#    WEBUI_AUTH=true, pin CORS_ALLOW_ORIGIN to your origin, and firewall or
-#    localhost-bind the port.
+# Settings come from `.env` in this folder; ./.env.example lists them. Without
+# a `.env` the defaults below apply.
+#
+# !! LOCAL TESTING ONLY — NOT production-hardened. Auth is off, CORS is open
+#    (Open WebUI defaults CORS_ALLOW_ORIGIN to '*' and logs a warning about
+#    it), and :3000 binds all interfaces. Before any real/shared use, set these
+#    in `.env`: OPEN_WEBUI_AUTH=true, OPEN_WEBUI_CORS_ALLOW_ORIGIN to your
+#    origin, and OPEN_WEBUI_PORT=192.168.x.x:3000 (your host's LAN address),
+#    plus a firewall rule for the port.
 #
 #   Start (a vLLM engine must already be up — see vllm_xpu/compose.yaml).
 #   From the repo root:
@@ -24,7 +28,8 @@
 # instead talks to vLLM through the HOST's published port:
 #   - Same host (default): host.docker.internal -> host gateway (Linux), so the
 #     URL below hits the vllm container's published :8000.
-#   - Different host: set OPENAI_API_BASE_URL to http://<vllm-host>:8000/v1.
+#   - Different host: set OPEN_WEBUI_API_BASE_URL in `.env` to
+#     http://<vllm-host>:8000/v1.
 #   - Swapping engines: no change needed — all three engine folders publish
 #     :8000 and only one runs at a time on the single GPU, so this URL is
 #     stable whichever of them is up.
@@ -35,7 +40,7 @@ name: open-webui
 
 services:
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.12.4
+    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.12.5}
     container_name: open-webui
     restart: unless-stopped
     # A separate project = a separate network, so the vLLM service name does not
@@ -45,19 +50,23 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       # vLLM's OpenAI-compatible endpoint, via the host's published :8000.
-      # Remote vLLM host -> http://<vllm-host>:8000/v1. Works unchanged whether
-      # the base or the scaler engine is up (both publish :8000).
-      OPENAI_API_BASE_URL: "http://host.docker.internal:8000/v1"
-      OPENAI_API_KEY: "EMPTY"           # vLLM doesn't require auth by default
+      # Works unchanged whichever engine is up (all publish :8000).
+      OPENAI_API_BASE_URL: "${OPEN_WEBUI_API_BASE_URL:-http://host.docker.internal:8000/v1}"
+      OPENAI_API_KEY: "${OPEN_WEBUI_API_KEY:-EMPTY}"   # vLLM doesn't require auth by default
       ENABLE_OLLAMA_API: "false"
-      WEBUI_AUTH: "false"
-      ENABLE_SIGNUP: "false"
+      WEBUI_AUTH: "${OPEN_WEBUI_AUTH:-false}"
+      ENABLE_SIGNUP: "${OPEN_WEBUI_SIGNUP:-false}"
+      CORS_ALLOW_ORIGIN: "${OPEN_WEBUI_CORS_ALLOW_ORIGIN:-*}"
+      # true (Open WebUI's default): the URL, key and signup values above are
+      # saved on first start and later changes are ignored. ./.env.example
+      ENABLE_PERSISTENT_CONFIG: "${OPEN_WEBUI_PERSISTENT_CONFIG:-true}"
     volumes:
       - open-webui-data:/app/backend/data
     ports:
-      # Binds ALL interfaces. The UI has auth disabled — keep it off untrusted
-      # networks: use "127.0.0.1:3000:8080" for localhost-only, or firewall it.
-      - "3000:8080"
+      # Binds ALL interfaces by default. The UI has auth disabled — keep it off
+      # untrusted networks: OPEN_WEBUI_PORT=192.168.x.x:3000 binds your LAN
+      # address only, and firewall it.
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
 
 volumes:
   open-webui-data:
