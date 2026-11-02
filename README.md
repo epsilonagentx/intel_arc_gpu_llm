@@ -322,8 +322,10 @@ docker compose -f open_web_ui/compose.yaml down       # stop
 **Start a vLLM engine first.** These are independent Compose projects, so there's
 no automatic `depends_on` linking them. Order isn't fatal, though — if you start the
 UI first it runs fine but shows no models until vLLM is reachable, then they
-appear on refresh. Both services are `restart: unless-stopped`, so after a host
-reboot they self-start and the UI populates once vLLM is healthy.
+appear on refresh. Open WebUI and the `vllm_xpu/` and `scaler/` engines are
+`restart: unless-stopped`, so after a host reboot they self-start and the UI
+populates once vLLM is healthy. `vllm_openai_xpu/` defaults to `no`: start it
+yourself, or set `VLLM_RESTART=unless-stopped` in its `.env`.
 
 Open it at `http://localhost:3000` (auth disabled). It runs as its own Compose
 project (`open-webui`), so it sits on a separate Docker network and reaches vLLM

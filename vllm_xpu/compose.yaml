@@ -5,9 +5,9 @@ name: llm
 
 services:
   vllm:
-    image: intel/vllm:0.21.0-ubuntu24.04
+    image: ${VLLM_IMAGE:-intel/vllm:0.21.0-ubuntu24.04}
     container_name: vllm-xpu
-    restart: unless-stopped
+    restart: "${VLLM_RESTART:-unless-stopped}"
     # 0.21.0 needs the WHOLE /dev/dri (plus the by-path bind-mount under volumes:).
     # oneCCL's ze_fd_manager opendir()s /dev/dri/by-path during the world_size=1
     # warm-up all_reduce, and Docker's `devices:` never recreates that symlink dir
@@ -20,8 +20,8 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - "992"   # host 'render' GID
-      - "44"    # host 'video' GID
+      - "${RENDER_GID:-992}"   # host 'render' GID
+      - "${VIDEO_GID:-44}"     # host 'video' GID
     ipc: host
     shm_size: "16g"
     volumes:
@@ -43,7 +43,7 @@ services:
       SYCL_CACHE_PERSISTENT: "1"
       no_proxy: "localhost,127.0.0.1"
     ports:
-      - "8000:8000"
+      - "${VLLM_HOST_PORT:-8000}:8000"
     # (No working_dir: 0.17.0-xpu had /workspace/vllm, but 0.21.0-ubuntu24.04 does
     # not ship it, and `vllm serve` needs no particular cwd.)
     # vLLM CLI serves an OpenAI-compatible API on /v1/*.
@@ -75,10 +75,9 @@ services:
     # lives in its own folder). No .env? The defaults below render exactly the
     # validated B60 command, so the file is fully runnable as-is. To override:
     #   cp .env.example .env   # then uncomment/edit values and `docker compose up -d`
-    # Every variable is VALUE-ONLY: flag names live in this command, values come
-    # from .env. Optional flags that are NOT part of the validated recipe are
-    # catalogued in .env.example — each entry shows the exact `--flag ${VAR:-…}`
-    # line to add to this command when you want it.
+    # Flag names live in this command, values come from .env. Flags that are
+    # NOT part of the validated recipe go in VLLM_EXTRA_ARGS, appended last;
+    # .env.example lists the useful ones.
     command: >
       vllm serve ${VLLM_MODEL:-openai/gpt-oss-20b}
         --host 0.0.0.0
@@ -89,6 +88,7 @@ services:
         --enable-auto-tool-choice
         --tool-call-parser ${VLLM_TOOL_CALL_PARSER:-openai}
         --served-model-name ${VLLM_SERVED_MODEL_NAME:-gpt-oss-20b}
+        ${VLLM_EXTRA_ARGS:-}
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && echo -e 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 30s

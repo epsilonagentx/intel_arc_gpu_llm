@@ -8,8 +8,9 @@ sitting in front of that port doesn't care which one is running.
 Think of this as the baseline you fall back to. It's the oldest vLLM of the three
 and the least interesting, which is exactly the point: when something breaks on
 one of the other engines, this is the one you bring up to find out whether the
-problem was the engine or the setup around it. It's also the only one configured
-with `restart: unless-stopped`, so it comes back on its own after a reboot.
+problem was the engine or the setup around it. Its restart policy defaults to
+`unless-stopped` (`VLLM_RESTART` in `.env`), so it comes back on its own after a
+reboot.
 
 | Doc | What it covers |
 |-----|----------------|
@@ -69,8 +70,9 @@ section has the `/proc` reads that prove it. Resist restarting; you'd throw away
 the compile work and start the silence over. After the first run,
 `SYCL_CACHE_PERSISTENT=1` plus the `vllm-cache` volume cut restarts to ~30 s.
 
-Because the service is `restart: unless-stopped`, it auto-starts when the Docker
-daemon does. An explicit `docker compose stop vllm` is what keeps it down.
+Because the service is `restart: unless-stopped` by default, it auto-starts when
+the Docker daemon does. An explicit `docker compose stop vllm` is what keeps it
+down; `VLLM_RESTART=no` in `.env` keeps it down after a reboot too.
 
 ---
 
@@ -119,6 +121,20 @@ The flag names stay in the compose file; only values come from the environment.
 With no `.env` present the defaults render exactly the validated command, so the
 file runs as-is. Start from `.env.example`, which documents every variable with
 its default.
+
+**`VLLM_EXTRA_ARGS` (default empty) — flags outside the validated recipe.**
+They're appended to the end of the command, separated by spaces, for example
+`--max-num-seqs 16 --enforce-eager`. Put single quotes around a JSON value.
+`.env.example` lists the flags worth knowing on one card.
+
+**Host settings.** These stay the same whichever model runs:
+
+| Variable | Default | What it sets |
+|----------|---------|--------------|
+| `VLLM_IMAGE` | the pinned `intel/vllm` tag | The image. A value in `.env` keeps you on it after the repo moves on; see *Upgrading the image* |
+| `VLLM_HOST_PORT` | `8000` | The host side of the port. `192.168.x.x:8000` listens on your LAN address only; clients on this host, `smoke.sh` and `bench.sh` then need that address too (`VLLM_ENDPOINT`) |
+| `VLLM_RESTART` | `unless-stopped` | Docker's restart policy. `no` leaves the engine down after a reboot, so it can't fight another engine for the GPU |
+| `RENDER_GID`, `VIDEO_GID` | `992`, `44` | The host's `render` and `video` group IDs; see *Things that are specific to the host* |
 
 **`VLLM_GPU_MEMORY_UTILIZATION` (default `0.80`) — the one with teeth.** This
 sizes the weights plus the KV pool, but on this XPU build it does **not** cap
@@ -183,9 +199,9 @@ Sizes are on-disk cache footprint, not loaded weights.
 
 ## Upgrading the image
 
-Pinned to `intel/vllm:0.21.0-ubuntu24.04`. Two things changed from the earlier
-`0.17.0-xpu` and both are already baked into `compose.yaml`, but they'll bite if
-you bump the image yourself.
+Pinned to `intel/vllm:0.21.0-ubuntu24.04`. To try another tag, set `VLLM_IMAGE`
+in `.env`. Two things changed from the earlier `0.17.0-xpu` and both are already
+baked into `compose.yaml`, but they'll bite if you bump the image yourself.
 
 **Device passthrough.** 0.21.0 needs the **whole `/dev/dri`** plus a read-only
 bind of `/dev/dri/by-path`. oneCCL's device manager calls `opendir()` on
@@ -215,18 +231,18 @@ clear it otherwise.
 
 ## Things that are specific to the host, not to you
 
-Two values in `compose.yaml` are properties of the machine it was written on and
-will very likely be wrong on yours:
+Two defaults are properties of the machine they were written on and may be
+wrong on yours: the GIDs of the host's `render` and `video` groups, `992` and
+`44`. Check yours with `getent group render video` and, if they differ, set them
+in `.env`:
 
-```yaml
-group_add:
-  - "992"   # host 'render' GID
-  - "44"    # host 'video' GID
+```bash
+RENDER_GID=992
+VIDEO_GID=44
 ```
 
-Check yours with `getent group render video` and edit accordingly. Getting these
-wrong shows up as permission errors opening the GPU device nodes, which is not an
-obvious symptom.
+Getting these wrong shows up as permission errors opening the GPU device nodes,
+which is not an obvious symptom.
 
 Unlike the upstream engine, this one runs happily with
 `SYCL_CACHE_PERSISTENT=1`, which is why the setting is enabled here.
