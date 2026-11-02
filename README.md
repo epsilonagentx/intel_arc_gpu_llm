@@ -264,9 +264,11 @@ The vLLM endpoint has **no authentication**, so don't expose port 8000 to
 untrusted networks. Restrict it with a host firewall — UFW is shown here, but any
 firewall (firewalld, nftables, iptables) does the same job:
 
-- **Port 8000 (vLLM):** allow only your LAN subnet — or bind it to localhost if
-  you only consume it on the host. With UFW, for example:
+- **Port 8000 (vLLM):** allow only your LAN subnet. With UFW, for example:
   `sudo ufw allow from 192.168.x.0/24 to any port 8000 proto tcp`
+  Setting `VLLM_HOST_PORT=192.168.x.x:8000` (your host's LAN address) in the
+  engine's `.env` also makes it listen on that network only; clients on the
+  host itself then use that address instead of `localhost`.
 - **Port 3000 (Open WebUI), if you run it:** by default it binds **all**
   interfaces. Set `OPEN_WEBUI_PORT=192.168.x.x:3000` (your host's LAN
   address) in `open_web_ui/.env` so the auth-disabled UI listens on that
@@ -289,7 +291,9 @@ one shared copy.
 
 **The engines don't need root.** They reach the GPU through the host's `render`
 and `video` groups, which `group_add` already passes in. Set `VLLM_USER` to your
-`id -u`:`id -g`, e.g. `1000:1000`, so the files they write are yours.
+`id -u`:`id -g`, e.g. `1000:1000`, so the files they write are yours. The
+group IDs default to `992` and `44`; if `getent group render video` shows
+others on your host, set `RENDER_GID` and `VIDEO_GID` in the engine's `.env`.
 
 ---
 

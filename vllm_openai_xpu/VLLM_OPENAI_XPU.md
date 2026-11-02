@@ -101,9 +101,9 @@ example to empty the prefix cache.
 
 ## Configuration — `.env`
 
-`compose.yaml` takes every model-specific setting from `.env` in this folder,
-so you never edit the compose file to change models. Copy the template and
-edit:
+`compose.yaml` takes its settings from `.env` in this folder: the model ones
+below and the ones for your host under *Host settings*, so you never edit the
+compose file. Copy the template and edit:
 
 ```bash
 [ -f .env ] || cp .env.example .env    # never clobber an existing .env
@@ -133,6 +133,18 @@ the three whose wrong value breaks the boot or quietly makes things worse.
 > model's weights on one card, and the boot fails rather than shrinking it: on
 > a B60, gemma-4's weights plus gpt-oss's KV value don't fit. Use the value for
 > your card; each card file lists them.
+
+### Host settings
+
+These stay the same whichever model runs. Leave them commented and you get the
+defaults.
+
+| Variable | Default | What it sets |
+|----------|---------|--------------|
+| `VLLM_IMAGE` | the pinned `vllm/vllm-openai-xpu` tag | The image. A value in `.env` keeps you on it after the repo moves on, so leave it commented unless you're testing another version |
+| `VLLM_HOST_PORT` | `8000` | The host side of the port. `192.168.x.x:8000` listens on your LAN address only; clients on this host, `smoke.sh` and `bench.sh` then need that address too (`VLLM_ENDPOINT`) |
+| `VLLM_RESTART` | `no` | Docker's restart policy. `no` stops a forgotten engine from coming back and fighting another for the GPU; `unless-stopped` suits the one you keep running, and brings it back after a reboot or a Docker upgrade |
+| `RENDER_GID`, `VIDEO_GID` | `992`, `44` | The host's `render` and `video` group IDs; see *Device passthrough* |
 
 ---
 
@@ -562,6 +574,8 @@ and its 60.7 GiB fit neither card.
 The XPU images are in their own Docker Hub repo, `vllm/vllm-openai-xpu`, not
 `vllm/vllm-openai`, which has no XPU tags. `latest` there tracks the newest
 release, but compose pins a version so an upgrade is a deliberate change.
+`VLLM_IMAGE` in `.env` overrides the pin, for example to test the next
+version before the repo moves.
 
 ### `SYCL_CACHE_PERSISTENT=0` — mandatory with the V2 runner
 
@@ -621,7 +635,8 @@ GPU, but it stays until a boot without it proves that.
 Upstream's example uses `--privileged` and `--network=host`. This repo uses
 `group_add` (the `render` and `video` groups) and a normal port mapping instead,
 which is enough. The group IDs differ per host: check yours with
-`getent group render video`.
+`getent group render video` and set `RENDER_GID` and `VIDEO_GID` in `.env` if
+they aren't `992` and `44`.
 
 ---
 
