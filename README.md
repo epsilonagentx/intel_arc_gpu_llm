@@ -82,10 +82,10 @@ docker compose -f <wanted>/compose.yaml up -d     # any of the three folders abo
 ```
 
 **Which models an engine can serve, and how to point it at a different one, is
-documented in that engine's own doc** — and the three do not work the same
-way: `vllm_xpu/` and `vllm_openai_xpu/` read their model from a `.env` file,
-while `scaler/` has its model written into the `command:` block of its compose
-file. Go to the folder before changing a model.
+documented in that engine's own doc**. All three read their model from the
+`.env` in their folder, but the variables differ per engine, and the
+`.env.example` files in `vllm_openai_xpu/` and `scaler/` hold one block per
+model. Go to the folder before changing a model.
 
 `vllm_xpu/` and `scaler/` both serve gpt-oss-20b, so they are drop-in
 replacements for each other and downstream clients need no change when you swap

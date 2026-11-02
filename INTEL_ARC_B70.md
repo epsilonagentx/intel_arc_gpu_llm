@@ -206,9 +206,9 @@ int4 as it loads (`--quantization sym_int4`):
 | `smoke.sh` | ALL PASS |
 
 It's a dense 27B model, so every token reads all of its weights, which is why it
-decodes at well under half gemma-4's rate (inferred). The command, including the
-extra flags it needs, is the commented-out block in
-[`scaler/compose.yaml`](scaler/compose.yaml).
+decodes at well under half gemma-4's rate (inferred). Its settings, including
+the extra flags it needs, are block B in
+[`scaler/.env.example`](scaler/.env.example).
 
 ## Models that have run on the B70
 
