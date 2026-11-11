@@ -40,7 +40,7 @@ name: open-webui
 
 services:
   open-webui:
-    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.12.5}
+    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.13.3}
     container_name: open-webui
     restart: unless-stopped
     # A separate project = a separate network, so the vLLM service name does not
