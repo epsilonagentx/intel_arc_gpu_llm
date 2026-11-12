@@ -107,9 +107,10 @@ a larger value would probably fit (inferred, not tried).
 ² With image input off vLLM loads less, most likely because the image encoder is
 skipped (inferred).
 
-Intel attention is the plugin explained in
-[vllm_openai_xpu/PLUGIN.md](vllm_openai_xpu/PLUGIN.md). On 0.30.0 it cost image
-input. From 0.31.0 images work with it too (2026-10-06): nine test images gave
+Intel attention is explained in
+[*Intel attention for gemma-4*](vllm_openai_xpu/GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4).
+On 0.30.0 it cost image input. On 0.31.0 images worked with it too
+(2026-10-06): nine test images gave
 the same answers as on Triton, decode speed didn't change, and at the same
 9.5 GiB setting the KV pool with the draft model below is 340,227 tokens
 (2.60×) instead of 356,893. The image encoder's ~1 GiB comes out of the free
@@ -141,8 +142,9 @@ makes gemma-4 decode about 8% faster after a long prompt. Qwen3.8 needs
 `VLLM_MAX_NUM_SEQS=128` for the capture. On 0.30.0, with graphs off, the GPU
 was already 99–100% busy during decode, which is why short prompts barely
 change. The version comparisons are in
-[*0.30.0 → 0.31.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0300--0310) and
-[*0.31.0 → 0.32.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0310--0320).
+[*0.30.0 → 0.31.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0300--0310),
+[*0.31.0 → 0.32.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0310--0320) and
+[*0.32.0 → 0.33.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0320--0330).
 
 ## Measured: Qwen3.8-27B on the upstream engine
 
@@ -206,9 +208,9 @@ int4 as it loads (`--quantization sym_int4`):
 | `smoke.sh` | ALL PASS |
 
 It's a dense 27B model, so every token reads all of its weights, which is why it
-decodes at well under half gemma-4's rate (inferred). The command, including the
-extra flags it needs, is the commented-out block in
-[`scaler/compose.yaml`](scaler/compose.yaml).
+decodes at well under half gemma-4's rate (inferred). Its settings, including
+the extra flags it needs, are block B in
+[`scaler/.env.example`](scaler/.env.example).
 
 ## Models that have run on the B70
 

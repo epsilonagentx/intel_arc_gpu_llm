@@ -99,60 +99,65 @@ against the wrong one is worse than no benchmark.
 
 ## Models, and how to swap one
 
-**This engine is not `.env`-wired, and that is the main thing to know before
-touching its model.** `vllm_xpu/` and `vllm_openai_xpu/` read their model from a
-`.env` file; here the model and every flag that goes with it are written
-literally into the `command:` block of [`compose.yaml`](compose.yaml):
+The model and every flag that goes with it come from `.env` in this folder.
+[`.env.example`](.env.example) has one block per model: keep exactly one
+uncommented. The `command:` in [`compose.yaml`](compose.yaml) holds the flag
+names:
 
 ```yaml
 command:
   - |
-    vllm serve openai/gpt-oss-20b \
-      --max-model-len 131072 \
-      --gpu-memory-utilization 0.80 \
-      --kv-cache-memory-bytes 8647520256 \
+    vllm serve ${VLLM_MODEL:-openai/gpt-oss-20b} \
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-131072} \
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.80} \
       --enforce-eager \
-      --reasoning-parser openai_gptoss \
-      --tool-call-parser openai \
-      --served-model-name gpt-oss-20b
+      --reasoning-parser ${VLLM_REASONING_PARSER:-openai_gptoss} \
+      --tool-call-parser ${VLLM_TOOL_CALL_PARSER:-openai} \
+      --served-model-name ${VLLM_SERVED_MODEL_NAME:-gpt-oss-20b} \
+      ${VLLM_EXTRA_ARGS---kv-cache-memory-bytes 8647520256}
 ```
 
-So a swap is an edit to that file, then:
+The defaults are gpt-oss-20b on the B60's values, so without a `.env` the
+engine serves exactly that. `VLLM_EXTRA_ARGS` holds the flags only one model
+needs. Left unset, it is gpt-oss's byte value; set but empty, it adds nothing.
+
+So a swap is an edit to `.env`, then:
 
 ```bash
 docker compose up -d vllm-scaler
 ```
 
-No `--force-recreate` needed: editing `compose.yaml` changes the service's
-config hash, so Compose recreates the container by itself. The `.env`-wired
-engines work the same way, since their `.env` values are part of that hash.
+No `--force-recreate` needed: the `.env` values are part of the service's
+config hash, so Compose recreates the container by itself.
 
-This folder's `.env.example` holds only where the models live (`HF_CACHE`,
-`VLLM_USER`) and `HF_TOKEN`. The model flags stay in `compose.yaml` on purpose.
-They are not independent of one another, and three of them will break the
-engine or silently corrupt its output if carried across to a different model:
+Switch a whole block, never single lines. The flags are not independent of one
+another, and three of them will break the engine or silently corrupt its output
+if carried across to a different model:
 
 | flag | why it does not travel |
 |---|---|
-| `--enforce-eager` | **Mandatory for gpt-oss-20b.** Compiled mode boots fine and then returns empty content and reasoning — a silent correctness failure, not a crash. Read §4 before removing it for any model. |
-| `--kv-cache-memory-bytes 8647520256` | Absolute, and derived for *these* weights on *this* image. It OOMs rather than shrinking. Re-derive it per §3. |
-| no `--quantization` | gpt-oss-20b ships pre-quantized MXFP4, so passing `--quantization` is wrong. A model that needs online quantization requires it — which is the opposite mistake. |
+| `--enforce-eager` | Fixed in `compose.yaml`, not in `.env`. **Mandatory for gpt-oss-20b.** Compiled mode boots fine and then returns empty content and reasoning — a silent correctness failure, not a crash. Both blocks were measured with it. Read §4 before removing it for any model. |
+| `--kv-cache-memory-bytes 8647520256` | In block A's `VLLM_EXTRA_ARGS`. Absolute, and derived for *these* weights on *this* image. It OOMs rather than shrinking. Re-derive it per §3. |
+| `--quantization` | Only block B passes it. gpt-oss-20b ships pre-quantized MXFP4, so passing `--quantization` is wrong. A model that needs online quantization requires it — which is the opposite mistake. |
 
 `--reasoning-parser` and `--tool-call-parser` are model-family specific and fail
 **quietly**: the wrong value gives you an empty reasoning field or unparsed tool
-calls, not an error. Re-run `./smoke.sh` after any model change — that is what it
-is for.
+calls, not an error. Re-run `./smoke.sh` after any model change, with `MODEL=`
+set to the new served name — that is what it is for.
 
-`compose.yaml` also carries a second, commented-out `command:` for
-**Qwen3.8-27B**: the official BF16 checkpoint, quantized to int4 as it loads
-(`--quantization sym_int4`), at 98,304 tokens of context and util 0.90. It was
-measured on the B70, not the B60: 17.83 GiB of weights, 28.7 tok/s, `smoke.sh`
-ALL PASS. The details, including why 128k didn't fit, are in
-[INTEL_ARC_B70.md](../INTEL_ARC_B70.md). To switch, comment one `command:` block
-out and the other in. The served name changes to `qwen3.8-27b`, so clients asking
-for `gpt-oss-20b` stop working until you switch back. The upstream engine runs
-the same model faster, with the full 131,072 context; see
-[vllm_openai_xpu/QWEN3_8_27B.md](../vllm_openai_xpu/QWEN3_8_27B.md).
+Block B is **Qwen3.8-27B**: the official BF16 checkpoint, quantized to int4 as
+it loads (`--quantization sym_int4`), at 98,304 tokens of context and util 0.90.
+It was measured on the B70, not the B60: 17.83 GiB of weights, 28.7 tok/s,
+`smoke.sh` ALL PASS. The details, including why 128k didn't fit, are in
+[INTEL_ARC_B70.md](../INTEL_ARC_B70.md). The served name changes to
+`qwen3.8-27b`, so clients asking for `gpt-oss-20b` stop working until you switch
+back. The upstream engine runs the same model faster, with the full 131,072
+context; see [vllm_openai_xpu/QWEN3_8_27B.md](../vllm_openai_xpu/QWEN3_8_27B.md).
+
+The image, host port, restart policy and the host's render and video group IDs
+come from `.env` too (`VLLM_IMAGE`, `VLLM_HOST_PORT`, `VLLM_RESTART`,
+`RENDER_GID`, `VIDEO_GID`); `.env.example` explains each. Leave `VLLM_IMAGE`
+commented to follow the pin in §1.
 
 ### What this image can serve that the stock one cannot
 
@@ -336,7 +341,9 @@ and the 0.00 GiB row above is the proof (§4).
 
 ### ⭐ Claiming the idle VRAM — MEASURED 2026-09-10, kept
 
-`--kv-cache-memory-bytes 8647520256` is now set in `scaler/compose.yaml`.
+`--kv-cache-memory-bytes 8647520256` is now the default: block A of
+`.env.example` sets it, and `compose.yaml` falls back to it when
+`VLLM_EXTRA_ARGS` is unset.
 
 | | util 0.80 only | **+ `--kv-cache-memory-bytes`** | Δ |
 |---|---|---|---|
@@ -383,8 +390,9 @@ Four things worth knowing before touching this flag:
    extra 3.7 GiB, and the log says as much: *"If OOM'ed, check the difference
    of initial free memory between the current run and the previous run."*
 4. **Profiling is skipped, so the engine no longer prints an advised value.**
-   To re-derive the number after an image bump or on another card, comment the
-   flag out for one boot, read `gpu_worker.py:857`, then put it back.
+   To re-derive the number after an image bump or on another card, set
+   `VLLM_EXTRA_ARGS=` (empty) in `.env` for one boot, read `gpu_worker.py:857`,
+   then put the value back.
 
 `GET /metrics` does **not** expose pool size on this build (only
 `kv_cache_usage_perc`), so those figures always need a boot-log read — run this
@@ -596,6 +604,10 @@ oneCCL: ze_fd_manager.cpp:144 ... opendir failed
 Docker's `devices:` never recreates that symlink directory, hence the separate
 read-only bind-mount. The AMD iGPU nodes the whole-`/dev/dri` mapping also
 exposes are harmless — they are not SYCL XPUs, so there is no wrong-GPU risk.
+
+The container reaches the GPU through the host's `render` and `video` groups,
+which default to GIDs `992` and `44`. If `getent group render video` shows
+other numbers on your host, set `RENDER_GID` and `VIDEO_GID` in `.env`.
 
 ---
 
