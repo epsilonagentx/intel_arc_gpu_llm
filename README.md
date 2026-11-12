@@ -42,7 +42,7 @@ bites. Pick one and start there:
 |---|---|---|---|
 | [`vllm_xpu/`](vllm_xpu/VLLM_XPU.md) | stock `intel/vllm` 0.21.0 | `gpt-oss-20b` | the conservative baseline |
 | [`scaler/`](scaler/SCALER.md) | `intel/llm-scaler-vllm` 0.26.0-b2 | `gpt-oss-20b` | **fastest** for gpt-oss (85.6 tok/s on the B60) |
-| [`vllm_openai_xpu/`](vllm_openai_xpu/VLLM_OPENAI_XPU.md) | `vllm/vllm-openai-xpu` v0.32.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
+| [`vllm_openai_xpu/`](vllm_openai_xpu/VLLM_OPENAI_XPU.md) | `vllm/vllm-openai-xpu` v0.33.0 | `gemma-4-26b-a4b` | **currently live**; the only one that loads gemma-4 |
 
 **One GPU → exactly one engine at a time.** Each needs 13–16 GiB of weights plus
 its KV pool; together they OOM. Every command targets a folder, so you can't
@@ -82,10 +82,10 @@ docker compose -f <wanted>/compose.yaml up -d     # any of the three folders abo
 ```
 
 **Which models an engine can serve, and how to point it at a different one, is
-documented in that engine's own doc** — and the three do not work the same
-way: `vllm_xpu/` and `vllm_openai_xpu/` read their model from a `.env` file,
-while `scaler/` has its model written into the `command:` block of its compose
-file. Go to the folder before changing a model.
+documented in that engine's own doc**. All three read their model from the
+`.env` in their folder, but the variables differ per engine, and the
+`.env.example` files in `vllm_openai_xpu/` and `scaler/` hold one block per
+model. Go to the folder before changing a model.
 
 `vllm_xpu/` and `scaler/` both serve gpt-oss-20b, so they are drop-in
 replacements for each other and downstream clients need no change when you swap
@@ -112,9 +112,9 @@ byte value); all of them, with the measurement log, are in
 `vllm_openai_xpu/` runs upstream's own image and is what's live today. It is
 several vLLM minors newer than the others and the only engine here whose kernels
 load gemma-4. Its guide covers the three models it's validated for (gemma-4,
-Qwen3.8-27B and gpt-oss-20b), and gemma-4's prefill trade-off: quadratic on the
-default Triton backend, and 16–28× faster with the Intel-attention switch, which
-keeps image input from vLLM 0.31.0 on. Speculative decoding speeds up decode on top of that: about
+Qwen3.8-27B and gpt-oss-20b), and gemma-4's prefill trade-off: quadratic on
+Triton, and 16–28× faster with the Intel-attention switch, which keeps image
+input. Speculative decoding speeds up decode on top of that: about
 1.7× for gemma-4 with Google's small draft model, and 2× for Qwen3.8 with its
 own MTP head and an FP8 output layer —
 [vllm_openai_xpu/VLLM_OPENAI_XPU.md](vllm_openai_xpu/VLLM_OPENAI_XPU.md), with a page per model:
@@ -123,7 +123,7 @@ own MTP head and an FP8 output layer —
 
 **Benchmark before adopting any of them.** The win has to be measured on your own
 box, and the three sit on **different vLLM bases** (scaler → 0.26.0, stock →
-0.21.0, upstream → 0.32.0), so any difference mixes a fork's optimisations with an
+0.21.0, upstream → 0.33.0), so any difference mixes a fork's optimisations with an
 engine-version gap. Compare at equal `max_tokens`, and discard the first run after
 a cold start or a long idle — otherwise the numbers lie. The hygiene rules are in
 [scaler/SCALER.md](scaler/SCALER.md).
@@ -264,13 +264,15 @@ The vLLM endpoint has **no authentication**, so don't expose port 8000 to
 untrusted networks. Restrict it with a host firewall — UFW is shown here, but any
 firewall (firewalld, nftables, iptables) does the same job:
 
-- **Port 8000 (vLLM):** allow only your LAN subnet — or bind it to localhost if
-  you only consume it on the host. With UFW, for example:
+- **Port 8000 (vLLM):** allow only your LAN subnet. With UFW, for example:
   `sudo ufw allow from 192.168.x.0/24 to any port 8000 proto tcp`
-- **Port 3000 (Open WebUI), if you run it:** the mapping in
-  `open_web_ui/compose.yaml` is `3000:8080`, which binds **all** interfaces —
-  so either change it to `127.0.0.1:3000:8080` to keep the auth-disabled UI on
-  localhost, or firewall it to your LAN subnet the same way as port 8000.
+  Setting `VLLM_HOST_PORT=192.168.x.x:8000` (your host's LAN address) in the
+  engine's `.env` also makes it listen on that network only; clients on the
+  host itself then use that address instead of `localhost`.
+- **Port 3000 (Open WebUI), if you run it:** by default it binds **all**
+  interfaces. Set `OPEN_WEBUI_PORT=192.168.x.x:3000` (your host's LAN
+  address) in `open_web_ui/.env` so the auth-disabled UI listens on that
+  network only, and firewall it to your LAN subnet the same way as port 8000.
 
 ---
 
@@ -289,7 +291,9 @@ one shared copy.
 
 **The engines don't need root.** They reach the GPU through the host's `render`
 and `video` groups, which `group_add` already passes in. Set `VLLM_USER` to your
-`id -u`:`id -g`, e.g. `1000:1000`, so the files they write are yours.
+`id -u`:`id -g`, e.g. `1000:1000`, so the files they write are yours. The
+group IDs default to `992` and `44`; if `getent group render video` shows
+others on your host, set `RENDER_GID` and `VIDEO_GID` in the engine's `.env`.
 
 ---
 
@@ -304,8 +308,10 @@ any UI you prefer.
 > off (`WEBUI_AUTH=false`), open CORS (Open WebUI defaults `CORS_ALLOW_ORIGIN` to
 > `*` and logs `WARNING: CORS_ALLOW_ORIGIN IS SET TO '*' - NOT RECOMMENDED FOR
 > PRODUCTION DEPLOYMENTS`), and binds `:3000` on all interfaces. Before any real or
-> shared use: set `WEBUI_AUTH=true`, pin `CORS_ALLOW_ORIGIN` to your actual origin,
-> and keep the port off untrusted networks (see *Firewall*).
+> shared use, set these in `open_web_ui/.env`: `OPEN_WEBUI_AUTH=true`,
+> `OPEN_WEBUI_CORS_ALLOW_ORIGIN` to your actual origin, and keep the port off
+> untrusted networks (see *Firewall*). `open_web_ui/.env.example` lists every
+> setting.
 
 ```bash
 docker compose -f open_web_ui/compose.yaml up -d      # start the UI
@@ -316,16 +322,20 @@ docker compose -f open_web_ui/compose.yaml down       # stop
 **Start a vLLM engine first.** These are independent Compose projects, so there's
 no automatic `depends_on` linking them. Order isn't fatal, though — if you start the
 UI first it runs fine but shows no models until vLLM is reachable, then they
-appear on refresh. Both services are `restart: unless-stopped`, so after a host
-reboot they self-start and the UI populates once vLLM is healthy.
+appear on refresh. Open WebUI and the `vllm_xpu/` and `scaler/` engines are
+`restart: unless-stopped`, so after a host reboot they self-start and the UI
+populates once vLLM is healthy. `vllm_openai_xpu/` defaults to `no`: start it
+yourself, or set `VLLM_RESTART=unless-stopped` in its `.env`.
 
 Open it at `http://localhost:3000` (auth disabled). It runs as its own Compose
 project (`open-webui`), so it sits on a separate Docker network and reaches vLLM
 through the **host's published port**, not by Docker service name:
 
-- **Same host (default):** `OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1`
-  — the file maps `host.docker.internal` to the host gateway (Linux).
-- **Different host:** set `OPENAI_API_BASE_URL=http://<vllm-host>:8000/v1`.
+- **Same host (default):** `http://host.docker.internal:8000/v1` — the file
+  maps `host.docker.internal` to the host gateway (Linux).
+- **Different host:** set `OPEN_WEBUI_API_BASE_URL=http://<vllm-host>:8000/v1`
+  in `open_web_ui/.env`. Open WebUI keeps the first URL it saw in its
+  database, so on an existing install change it in its Admin settings instead.
 - **Scaler engine:** no change needed — `scaler/compose.yaml` also serves
   on `:8000` (only one engine runs at a time on the single GPU).
 

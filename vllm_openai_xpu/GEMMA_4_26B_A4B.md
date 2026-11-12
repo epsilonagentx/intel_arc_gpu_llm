@@ -8,7 +8,7 @@ Starting, switching models and the settings every model shares are in
 | | |
 |---|---|
 | Checkpoint | `adeepv/gemma-4-26B-A4B-it-W4A16-vLLM`, int4 group-32, 15.76 GiB |
-| Attention | Intel's kernel through [`head512_plugin/`](PLUGIN.md), with image input |
+| Attention | Intel's kernel (`FLASH_ATTN`), with image input |
 | Speculative decoding | Google's draft model, 3 tokens: 137–156 tok/s on the B70 |
 | Context | 131,072; extra context costs almost no memory |
 | Reasoning | on by default in the `.env.example` block |
@@ -82,9 +82,11 @@ timeouts along the whole path allow for it.
 
 ## ⚠ Prefill on Triton is quadratic
 
-On the default Triton backend, prefill time, not VRAM, limits usable context.
-[Intel attention](#intel-attention-for-gemma-4) removes the problem. Measured on
-the B60 (the B70 is 1.4–1.5× faster):
+On Triton attention, prefill time, not VRAM, limits usable context.
+[Intel attention](#intel-attention-for-gemma-4) removes the problem, which is
+why Block B sets it. With `auto`, steps that hold image tokens still run on
+Triton (see [*How vLLM picks the kernel*](#how-vllm-picks-the-kernel)).
+Measured on the B60 (the B70 is 1.4–1.5× faster):
 
 | cold prompt | wall |
 |---|---|
@@ -98,21 +100,43 @@ tokens it's extrapolation: about 51 min at 96k and 92 min at 131k, never run.
 Prefill here is even slower per token than decode, which a healthy kernel would
 never be.
 
-### Why the slow kernel gets chosen
+### How vLLM picks the kernel
 
-The boot log says it:
+gemma-4 has two kinds of attention layer: the sliding ones use head size 256
+and the full ones 512. The boot log says so and hands the choice to the
+platform (measured on 2026-11-02):
 
 ```
 Gemma4 model has heterogeneous head dimensions
 {'sliding_attention': 256, 'full_attention': 512}.
-FA4 not available, forcing TRITON_ATTN backend.
+Leaving the attention backend choice to the XPU platform.
 ```
 
-vLLM lets FLASH_ATTN take head size 512 only on FlashAttention 4, which is
-CUDA-only, so it puts every gemma-4 layer on Triton. Intel's head-512 kernel is
-compiled into this image but sits behind that check. No setting gets past it;
-the small plugin in `head512_plugin/` does. [PLUGIN.md](PLUGIN.md) walks
-through the check and the source.
+On an Intel GPU vLLM lets Intel's kernel take head sizes up to 512, so both
+kinds of layer can run on it. What runs depends on `VLLM_ATTN_BACKEND`:
+
+- `FLASH_ATTN`, as Block B sets it: every step runs on Intel's kernel, image
+  tokens included. The log says `Using Flash Attention backend.`
+- `auto`: vLLM picks `TRITON_FLASH_ATTN`, a mix decided per engine step. A
+  step that processes image tokens runs on Triton, every other step on
+  Intel's kernel. The log says `Using the Triton/FlashAttention composite
+  backend on XPU` (read from the source, not booted here). See
+  [*Images with Intel attention*](#images-with-intel-attention).
+
+In the vLLM v0.33.0 source:
+
+- The head-size check, with its own XPU answer:
+  [`supports_head_size()`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/attention/backends/flash_attn.py#L424-L435)
+- gemma-4's config hook that leaves the choice to the platform:
+  [`Gemma4Config`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/model_executor/models/config.py#L356-L361)
+- What `auto` picks for gemma-4 on XPU, and the explicit `FLASH_ATTN` case:
+  [`get_attn_backend_cls()`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/platforms/xpu.py#L213-L254)
+- The mix itself, and how it decides per step:
+  [`triton_flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/attention/backends/triton_flash_attn.py),
+  [`MMPrefixAttentionRouting`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/attention/backends/composite.py#L87-L115)
+
+Intel's head-512 kernels aren't on GitHub in readable form; they're compiled
+into `libattn_kernels_xe_2.so` inside the image.
 
 ## Intel attention for gemma-4
 
@@ -123,13 +147,8 @@ VLLM_ATTN_BACKEND=FLASH_ATTN
 ```
 
 Then `docker compose up -d`. To go back, set it to `auto` and run `up -d` again.
-Image input keeps working from vLLM 0.31.0 on; see
+Image input keeps working; see
 [*Images with Intel attention*](#images-with-intel-attention) below.
-
-**How it works.** `head512_plugin/` makes FLASH_ATTN accept head size 512 on
-XPU, and changes nothing else: with the switch off gemma-4 still gets Triton.
-Compose mounts it and puts it on `PYTHONPATH`, so every vLLM process loads it.
-[PLUGIN.md](PLUGIN.md) walks through it file by file.
 
 **Measured** on the B70 on 2026-09-30, on vLLM 0.30.0. Both columns use the same
 checkpoint, the 131,072 context cap, the 10.5 GiB KV pin and the same scripts,
@@ -159,10 +178,8 @@ window, so only the head-512 layers could have found it.
 
 **After an image upgrade, check the boot log before trusting it:**
 
-- `xpu_head512: FLASH_ATTN on XPU now accepts head size 512` means the plugin
-  loaded;
 - `Using Flash Attention backend.` and `Setting kv cache block size to 64` mean
-  it took effect;
+  Intel attention took effect;
 - there must be no `[vllm_xpu_kernels] XPU kernel not compiled … falling back to
   PyTorch reference attention`. Intel's wrapper silently switches to a slow
   reference path when a kernel variant is missing, and that line is the only
@@ -170,14 +187,33 @@ window, so only the head-512 layers could have found it.
 
 ### Images with Intel attention
 
-gemma-4 lets the tokens of one image look at each other in both directions,
-and vLLM applies that rule only on Triton or FlashAttention 4.
-[PLUGIN.md](PLUGIN.md#images-and-the-left-to-right-rule) explains the rule. On
-0.30.0 asking for FLASH_ATTN with images on stopped the boot, so Intel
-attention needed `--language-model-only` and cost image input.
+gemma-4 reads a picture differently from text. An image arrives as a block of
+tokens in the prompt, 258 of them in this setup whatever the image size. Text
+is read strictly left to right: each token can only look at the tokens before
+it, never ahead, because when the model writes it can't see words it hasn't
+written yet. That's called causal attention, and it's the one pattern every
+attention kernel supports.
 
-From 0.31.0, vLLM boots it anyway when FLASH_ATTN is asked for by name, reads
-the image tokens left to right like text, and says so in the log:
+A picture has no left-to-right order, though. The top-left corner means more
+once you've seen the bottom-right. So gemma-4 lets the tokens of one image look
+at each other in both directions, while everything else stays causal. Its
+config says so: `use_bidirectional_attention: vision`.
+
+```
+prompt:  text text text | img img img img img | text text
+         each looks     | all image tokens    | each looks back at
+         back only      | see each other      | everything before
+```
+
+That mix needs a kernel that can be told where each image starts and ends, and
+that drops the left-to-right rule inside it. vLLM calls this "mm_prefix" and
+asks each backend whether it can do it, through `supports_mm_prefix()`. Triton
+can. Flash Attention says yes only with FlashAttention 4, which is
+NVIDIA-only, so on an Intel GPU the answer is no.
+
+When `FLASH_ATTN` is asked for by name, vLLM uses it for gemma-4 with images
+on anyway, reads the image tokens left to right like text, and says so in the
+log:
 
 ```
 Using Flash Attention on XPU for a multimodal prefix-LM model because it was
@@ -254,6 +290,22 @@ the cleanest comparison.
 To go text-only for the larger pool, add
 `VLLM_TEXT_ONLY_FLAG=--language-model-only` and run `up -d`. Images then get
 `400 At most 0 image(s) may be provided in one prompt`.
+
+**`auto` reads images the correct way.** With `VLLM_ATTN_BACKEND=auto`,
+gemma-4 gets `TRITON_FLASH_ATTN`, a mix of the two kernels decided per engine
+step: a step that processes image tokens runs on Triton, which applies
+gemma-4's rule for images, and every other step runs on Intel's kernel. The
+log says `Using the Triton/FlashAttention composite backend on XPU`. This is
+read from the v0.33.0 source; gemma-4 has booted on 0.33.0 only with
+`FLASH_ATTN`. Two things to measure before `auto` replaces `FLASH_ATTN` in
+the block:
+
+- Steps with image tokens pay Triton's prefill cost, and so does any text
+  that shares such a step with them.
+- The mix keeps XPU graphs only for steps where every request decodes one
+  token. The draft model checks four tokens per step, so with it the mix
+  may lose part of what graphs gave, about 8% after a long prompt (inferred
+  from the source).
 
 ## Faster decode with a draft model
 
@@ -446,15 +498,13 @@ the model away from copying code exactly, which a coding agent depends on.
 3. **The draft model on the B60.** Its 0.78 GiB would most likely come out of
    the 4.25 GiB KV setting, which means a lower context cap (inferred, not
    booted).
-4. **Report the head-512 check upstream.** The kernel is compiled in, and only
-   `head512_plugin/` makes it reachable. A fix upstream would let the plugin go.
-5. **Images on Intel attention, beyond nine test images.** The image tokens
+4. **Images on Intel attention, beyond nine test images.** The image tokens
    are read left to right, and nine synthetic images gave the same answers as
    Triton. Real photos, several images per request and video are untested.
-   Since 0.31.0 vLLM has a backend that sends image batches to Triton and
-   the rest to Flash Attention (`TRITON_FLASH_ATTN`), but only for NVIDIA.
-   See [PLUGIN.md](PLUGIN.md#images-and-the-left-to-right-rule).
-6. **gemma-4's thinking loops.** Does the template fix from Hugging Face
+   `auto` reads them the correct way with the `TRITON_FLASH_ATTN` mix; its
+   speed against `FLASH_ATTN`, with and without the draft model, is
+   unmeasured. See [*Images with Intel attention*](#images-with-intel-attention).
+5. **gemma-4's thinking loops.** Does the template fix from Hugging Face
    discussion #48 stop them on this checkpoint, and what does it cost? Do the
    loops happen on Triton attention too? See *Known issue: thinking loops in
    agent sessions*.

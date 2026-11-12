@@ -6,7 +6,8 @@
 # !! SINGLE GPU — run EXACTLY ONE of the three engines at a time.
 # !! MEASURED on the B60 2026-09-09: 0.29.0 + V2 runner + the pinned pool below
 # !! = 83.5 tok/s, 338,928-token KV pool (2.59x @128k), smoke ALL PASS.
-# !! `restart: "no"` on purpose.
+# !! Restart policy defaults to "no" on purpose.
+# Settings come from `.env` in this folder; ./.env.example lists them.
 # Rationale, verified upstream facts, what to measure:  ./VLLM_OPENAI_XPU.md
 name: llm   # SAME project as vllm_xpu/scaler ON PURPOSE — shares the hf-cache volume
 
@@ -14,9 +15,10 @@ services:
   vllm-openai-xpu:
     # Upstream's own XPU image, separate Docker Hub repo from the CUDA one.
     # Here `latest` DOES track newest stable (unlike the Intel images).
-    image: vllm/vllm-openai-xpu:v0.32.0
+    image: ${VLLM_IMAGE:-vllm/vllm-openai-xpu:v0.33.0}
     container_name: vllm-openai-xpu
-    restart: "no"            # evaluation engine — do not let it fight for the GPU
+    # "no": a stopped engine must not come back and fight another for the GPU.
+    restart: "${VLLM_RESTART:-no}"
     # Whole /dev/dri + the by-path bind below are BOTH required, even at
     # world_size=1. This is upstream's documented recipe, not a local workaround.
     # (0.29.0 skips the oneCCL warm-up at world_size=1, so the bind may now be
@@ -27,8 +29,8 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - "992"   # host 'render' GID
-      - "44"    # host 'video' GID
+      - "${RENDER_GID:-992}"   # host 'render' GID
+      - "${VIDEO_GID:-44}"     # host 'video' GID
     ipc: host
     shm_size: "16g"
     volumes:
@@ -40,10 +42,6 @@ services:
       # Clear once after any image bump:
       #   docker compose down && docker volume rm llm_vllm-openai-cache
       - vllm-openai-cache:/cache/vllm
-      # vLLM plugin that lets FLASH_ATTN take head size 512 on XPU. Inert unless
-      # VLLM_ATTN_BACKEND=FLASH_ATTN.
-      # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"
-      - ./head512_plugin:/opt/vllm-plugins:ro
       # Edited chat templates, picked by VLLM_CHAT_TEMPLATE below.
       - ./chat_templates:/opt/chat-templates:ro
     environment:
@@ -61,9 +59,8 @@ services:
       # Integer only — a blank value crashes at boot, so the `:-1` is load-bearing.
       VLLM_USE_V2_MODEL_RUNNER: "${VLLM_USE_V2_MODEL_RUNNER:-1}"
       HF_TOKEN: "${HF_TOKEN:-}"                # empty = anonymous; no secret in this file
-      PYTHONPATH: /opt/vllm-plugins            # where vLLM finds the head512 plugin above
     ports:
-      - "8000:8000"          # same port as the other engines (only one runs at a time)
+      - "${VLLM_HOST_PORT:-8000}:8000"   # same port as the other engines (only one runs at a time)
     # ENTRYPOINT is ["vllm","serve"], so command is ARGS ONLY — no shell wrapper
     # and no `vllm serve` prefix (this differs from scaler/compose.yaml).
     # !! --enforce-eager is REQUIRED BY THE 8.0 GiB PIN BELOW, not by 128k, and
@@ -80,8 +77,8 @@ services:
     # `--enforce-eager=False` does NOT parse.
     # Prefill is UNCHANGED by it (on TRITON_ATTN still quadratic, exponent 2.048
     # measured -- that is the attention backend, not launch overhead).
-    # From 0.31.0 compiled mode also captures XPU graphs; there is no longer
-    # an environment variable to turn them off. ./VLLM_OPENAI_XPU.md "Performance"
+    # Compiled mode also captures XPU graphs; no environment variable turns
+    # them off. ./VLLM_OPENAI_XPU.md "Performance"
     command:
       - "${VLLM_MODEL:-openai/gpt-oss-20b}"
       - "--host=0.0.0.0"
@@ -134,9 +131,10 @@ services:
       # chunk, so the client must send stream_options.include_usage.
       # ./VLLM_OPENAI_XPU.md "Per-request stats"
       - "--enable-per-request-metrics"
-      # Attention backend. `auto` lets vLLM choose (TRITON_ATTN for gemma-4,
-      # FLASH_ATTN for gpt-oss and Qwen3.8). FLASH_ATTN runs gemma-4 on Intel's
-      # own kernel: much faster prefill, and from 0.31.0 images still work.
+      # Attention backend. `auto` lets vLLM choose: FLASH_ATTN for gpt-oss and
+      # Qwen3.8; for gemma-4, Triton for steps with image tokens and Intel's
+      # kernel for the rest. FLASH_ATTN runs all of gemma-4 on Intel's kernel,
+      # images included.
       # --language-model-only turns image input off for ~5% more KV pool.
       # The text-only flag is passed whole, like VLLM_EAGER_FLAG.
       # ./GEMMA_4_26B_A4B.md "Intel attention for gemma-4"

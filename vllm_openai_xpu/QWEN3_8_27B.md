@@ -47,7 +47,7 @@ boot. The measured one is `91bd022d5b49442a868bc35008f6c21e1860edfa`.
 ## Intel attention, with images
 
 The full-attention heads are size 256, which
-Intel's kernel takes without the head-512 plugin. Qwen also doesn't use
+Intel's kernel takes. Qwen also doesn't use
 gemma-4's bidirectional attention over image tokens, so `auto` already picks
 FLASH_ATTN and image input keeps working. The block sets `FLASH_ATTN`
 explicitly anyway, so the choice is visible. In the log you should see
@@ -58,10 +58,11 @@ linear-attention state, and this is normal.
 The log also mentions Triton (`Warming up Qwen GDN Triton kernels`), and that
 doesn't mean attention fell back. On XPU the linear-attention layers run their
 XPU path, which calls Intel's own kernel (`torch.ops._xpu_C.gdn_attention`).
-With the draft model on, 0.32.0 says so with `GDN spec decode kernel: XPU`
-(0.31.0 printed `GDN decode kernel: XPU`, and 0.30.0 printed "cuda" there
-even on XPU). `Warmed M-RoPE Triton kernels` is the position encoding, a small
-step outside attention. This is read from the v0.32.0 source.
+With the draft model on, 0.32.0 and 0.33.0 say so with `GDN spec decode
+kernel: XPU` (0.31.0 printed `GDN decode kernel: XPU`, and 0.30.0 printed
+"cuda" there even on XPU). `Warmed M-RoPE Triton kernels` is the position
+encoding, a small step outside attention. This is read from the v0.32.0
+source, and the 0.33.0 boot log on the B70 shows the same line.
 
 ## Measured against Triton
 
