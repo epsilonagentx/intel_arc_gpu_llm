@@ -29,8 +29,7 @@ rather than a measurement, it says so.
 | | |
 |---|---|
 | GPU | Arc Pro B70 |
-| Image | `vllm/vllm-openai-xpu:v0.33.0` |
-| Model runner | V2 (upstream default from 0.29.0) |
+| Image | `vllm/vllm-openai-xpu:v0.34.0` |
 | XPU graphs | on, the default since 0.31.0 (0.31 GiB for gemma-4) |
 | Model served | `gemma-4-26B-A4B-it`, offline int4 group-32 |
 | Context | 131,072 |
@@ -620,6 +619,60 @@ Changes in 0.33.0 that a client or an operator can notice:
 - **`--mamba-cache-mode` is deprecated** and has no effect. Compose doesn't
   use it.
 
+### 0.33.0 → 0.34.0
+
+Measured on the B70 on 2026-11-18 with Qwen3.8 (FP8 output layer, MTP with
+3 tokens, 200,000 context, XPU graphs on), same `.env` values on both. Each
+engine was warmed up with one full run and then measured twice: three
+512-token answers per row with thinking off and a fixed seed, a cold prompt
+of about 35,200 tokens sent twice, the first of them sent again, and 6
+requests at once.
+
+| | 0.33.0 | 0.34.0 |
+|---|---|---|
+| decode, temperature 0 | 75.3 / 57.3 / 62.8–67.2 tok/s | 75.3 / 54.5 / 62.4–64.7 |
+| decode, sampling | 69.7 / 52.9 / 61.4–64.2 tok/s | 70.9 / 52.9 / 59.3–60.8 |
+| draft tokens accepted, temperature 0 | 54.8–56.9% | 53.0–54.1% |
+| first token, 35,200-token cold prompt | 28.3 s | 27.3 s |
+| the same prompt sent again, 33,600 tokens from cache | 1.59–1.60 s | 1.51 s |
+| 6 requests at once | 228–236 tok/s | 227–240 |
+| KV pool / XPU graph memory | 220,000 tokens / 0.96 GiB | 220,000 / 1.06 GiB |
+
+Prefill is about 3% faster: the cold prompt's first token came a second
+sooner in all four runs. Decode and concurrency are the same. The second
+answer is 5% slower at temperature 0 in both runs, and the draft model
+accepted fewer of its tokens; the new kernels may write slightly different
+text there, but the answers weren't compared. `smoke.sh` passed with
+reasoning on, off and at the default, and an image request passed. The first
+boot on the new image spends about 37 s compiling.
+
+**What 0.34.0 changes on Intel GPUs** (read from the source):
+
+- **A new Intel software stack**, the first since 0.31.0: torch 2.15, Triton
+  for XPU 3.9, Intel's kernel library `vllm_xpu_kernels` 0.1.17, and the
+  GPU driver packages now come from Intel's apt repository instead of fixed
+  versions. This is why speed can move after this upgrade when it didn't
+  after the two before it.
+- **The V1 model runner is gone**, and with it the
+  `VLLM_USE_V2_MODEL_RUNNER` switch. Compose no longer passes it; any value
+  other than `1` now stops the boot.
+- **The headline memory changes don't apply here.** The extensible KV cache
+  runs only on NVIDIA and AMD cards, and `--kv-cache-memory-bytes` turns it
+  off anyway. The new default block size of 64 changes neither Qwen3.8's
+  1,600 nor gemma-4's 64.
+- **Qwen3.8**: the linear-attention layers now reuse their step metadata on
+  XPU too. The Intel M-RoPE kernel named in the release notes isn't used:
+  its XPU path returns the Triton one on its first line.
+- **gemma-4** (not booted on 0.34.0): the MoE routing kernel now masks the
+  padding rows that graph replay adds, and images are normalized on the GPU
+  by default. Send an image request after switching to gemma-4.
+
+Changes in 0.34.0 that a client can notice:
+
+- **A broken or oversized image gets HTTP 400**, not 500.
+- **Streamed usage reports cached prompt tokens**, for a stream that asks
+  for it with `include_usage`.
+
 ---
 
 ## Why it is configured this way
@@ -638,23 +691,14 @@ release, but compose pins a version so an upgrade is a deliberate change.
 `VLLM_IMAGE` in `.env` overrides the pin, for example to test the next
 version before the repo moves.
 
-### `SYCL_CACHE_PERSISTENT=0` — mandatory with the V2 runner
+### `SYCL_CACHE_PERSISTENT=0` — mandatory
 
-With `1`, the V2 runner segfaults at boot, in `getSortedImages`, with no Python
+With `1`, the engine segfaults at boot, in `getSortedImages`, with no Python
 traceback. Its warm-up exercises `torch.topk` (for logprobs, which this setup
 never asks for), and the XPU kernel crashes while loading from the persistent
 SYCL code cache. No setting skips that warm-up, so the cache stays off; the
 cost is a kernel rebuild on every boot. Not yet reported upstream. The stock
 engine in `vllm_xpu/` runs fine with `1`.
-
-### The V2 model runner
-
-V2 is the default since 0.29.0 and uses less memory than V1 (about 1.03 GiB of
-non-torch memory against 1.50, and a larger KV pool). The log line
-`xpu_worker.py Using V2 Model Runner` confirms it; V1 prints nothing.
-`Initializing a V1 LLM engine` is about the engine, not the runner.
-`VLLM_USE_V2_MODEL_RUNNER` overrides it and takes only `0` or `1`; a blank
-value crashes.
 
 ### `--kv-cache-memory-bytes` — the big capacity lever
 
@@ -755,7 +799,7 @@ stack; if a process supervisor runs it, it will come back by itself.
 | Much slower than [*Intel attention for gemma-4*](GEMMA_4_26B_A4B.md#intel-attention-for-gemma-4) says, after an image upgrade | Look for `XPU kernel not compiled … falling back` in the log: a kernel variant is missing from the new image |
 | Context ceiling dropped after a tuning change | You raised `--max-num-batched-tokens`; it inflates the sliding-window reservation |
 | Boot fails: `max_num_seqs (256) exceeds available Mamba cache blocks` | Qwen3.8 with graphs needs `VLLM_MAX_NUM_SEQS=128` (or anything up to the number in the message) |
-| Boot segfaults in `getSortedImages` | `SYCL_CACHE_PERSISTENT=1` with the V2 runner. Must stay `0` |
+| Boot segfaults in `getSortedImages` | `SYCL_CACHE_PERSISTENT=1`. Must stay `0` |
 | `metrics` is `null` or missing | Engine not recreated since the flag was added; the stream didn't send `stream_options.include_usage`; the request went through a gateway that drops it; `n` > 1 or a `/v1/completions` call with a list of prompts; or the endpoint is `/v1/responses` or `/v1/messages`. Only `mean_itl_ms` `null` just means one token came back |
 | Same id listed twice | A `--served-model-name` value is repeated in `compose.yaml`; vLLM does not dedupe |
 | Orphan-container warning | The other engine's container lingers; `down` that folder. Never `--remove-orphans` |
@@ -769,8 +813,8 @@ gemma-4's own are in [GEMMA_4_26B_A4B.md](GEMMA_4_26B_A4B.md#open-questions).
 1. **Heavier concurrent load.** The only real test is 6 requests at a time,
    512 tokens each (323 tok/s in total, 386 with the draft model). Every other
    concurrency figure is allocated capacity, and `bench.sh` sends one request.
-2. **Report the V2 segfault upstream.** It reproduces cleanly, and there's no
-   existing issue.
+2. **Report the `SYCL_CACHE_PERSISTENT=1` segfault upstream.** It reproduces
+   cleanly, and there's no existing issue.
 3. **The stock `intel/vllm:0.21.0` baseline** in `vllm_xpu/`, still unmeasured.
 
 ---

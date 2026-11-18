@@ -58,11 +58,10 @@ linear-attention state, and this is normal.
 The log also mentions Triton (`Warming up Qwen GDN Triton kernels`), and that
 doesn't mean attention fell back. On XPU the linear-attention layers run their
 XPU path, which calls Intel's own kernel (`torch.ops._xpu_C.gdn_attention`).
-With the draft model on, 0.32.0 and 0.33.0 say so with `GDN spec decode
+With the draft model on, 0.32.0 through 0.34.0 say so with `GDN spec decode
 kernel: XPU` (0.31.0 printed `GDN decode kernel: XPU`, and 0.30.0 printed
-"cuda" there even on XPU). `Warmed M-RoPE Triton kernels` is the position
-encoding, a small step outside attention. This is read from the v0.32.0
-source, and the 0.33.0 boot log on the B70 shows the same line.
+"cuda" there even on XPU). This is read from the v0.32.0 source, and the
+0.34.0 boot log on the B70 shows the same line.
 
 ## Measured against Triton
 

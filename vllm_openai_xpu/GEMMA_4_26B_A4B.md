@@ -123,17 +123,17 @@ kinds of layer can run on it. What runs depends on `VLLM_ATTN_BACKEND`:
   backend on XPU` (read from the source, not booted here). See
   [*Images with Intel attention*](#images-with-intel-attention).
 
-In the vLLM v0.33.0 source:
+In the vLLM v0.34.0 source:
 
 - The head-size check, with its own XPU answer:
-  [`supports_head_size()`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/attention/backends/flash_attn.py#L424-L435)
+  [`supports_head_size()`](https://github.com/vllm-project/vllm/blob/v0.34.0/vllm/v1/attention/backends/flash_attn.py#L424-L435)
 - gemma-4's config hook that leaves the choice to the platform:
-  [`Gemma4Config`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/model_executor/models/config.py#L356-L361)
+  [`Gemma4Config`](https://github.com/vllm-project/vllm/blob/v0.34.0/vllm/model_executor/models/config.py#L587-L592)
 - What `auto` picks for gemma-4 on XPU, and the explicit `FLASH_ATTN` case:
-  [`get_attn_backend_cls()`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/platforms/xpu.py#L213-L254)
+  [`get_attn_backend_cls()`](https://github.com/vllm-project/vllm/blob/v0.34.0/vllm/platforms/xpu.py#L213-L254)
 - The mix itself, and how it decides per step:
-  [`triton_flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/attention/backends/triton_flash_attn.py),
-  [`MMPrefixAttentionRouting`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/attention/backends/composite.py#L87-L115)
+  [`triton_flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.34.0/vllm/v1/attention/backends/triton_flash_attn.py),
+  [`MMPrefixAttentionRouting`](https://github.com/vllm-project/vllm/blob/v0.34.0/vllm/v1/attention/backends/composite.py#L87-L115)
 
 Intel's head-512 kernels aren't on GitHub in readable form; they're compiled
 into `libattn_kernels_xe_2.so` inside the image.
@@ -296,7 +296,7 @@ gemma-4 gets `TRITON_FLASH_ATTN`, a mix of the two kernels decided per engine
 step: a step that processes image tokens runs on Triton, which applies
 gemma-4's rule for images, and every other step runs on Intel's kernel. The
 log says `Using the Triton/FlashAttention composite backend on XPU`. This is
-read from the v0.33.0 source; gemma-4 has booted on 0.33.0 only with
+read from the v0.34.0 source; gemma-4 has been booted here only with
 `FLASH_ATTN`. Two things to measure before `auto` replaces `FLASH_ATTN` in
 the block:
 

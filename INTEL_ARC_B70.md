@@ -143,8 +143,9 @@ makes gemma-4 decode about 8% faster after a long prompt. Qwen3.8 needs
 was already 99–100% busy during decode, which is why short prompts barely
 change. The version comparisons are in
 [*0.30.0 → 0.31.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0300--0310),
-[*0.31.0 → 0.32.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0310--0320) and
-[*0.32.0 → 0.33.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0320--0330).
+[*0.31.0 → 0.32.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0310--0320),
+[*0.32.0 → 0.33.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0320--0330) and
+[*0.33.0 → 0.34.0*](vllm_openai_xpu/VLLM_OPENAI_XPU.md#0330--0340).
 
 ## Measured: Qwen3.8-27B on the upstream engine
 
